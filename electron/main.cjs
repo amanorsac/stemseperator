@@ -1,0 +1,191 @@
+/**
+ * Easy Stems: split a song into its instruments, on this computer, nothing
+ * uploaded anywhere.
+ *
+ * The window is a thin shell. All the real work — running HT-Demucs over the
+ * audio — happens in stems.cjs, in a worker process of its own, so the window
+ * stays responsive while a song is being split.
+ */
+
+const { app, BrowserWindow, ipcMain, dialog, shell, utilityProcess } = require('electron');
+const fs = require('fs/promises');
+const path = require('path');
+const { StemSeparator, STEMS } = require('./stems.cjs');
+
+let mainWindow;
+let stemWorker = null;
+
+/* ---------------------------------------------------------------- *
+ * The library: songs already separated, kept as small facts rather than a
+ * second copy of the audio — reopening one just sums its cached stems.
+ * ---------------------------------------------------------------- */
+
+function libraryPath() {
+  return path.join(app.getPath('userData'), 'library.json');
+}
+
+async function readLibrary() {
+  try {
+    return JSON.parse(await fs.readFile(libraryPath(), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+async function writeLibrary(list) {
+  await fs.mkdir(path.dirname(libraryPath()), { recursive: true });
+  await fs.writeFile(libraryPath(), JSON.stringify(list, null, 2));
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 900,
+    height: 720,
+    minWidth: 640,
+    minHeight: 560,
+    frame: false,
+    backgroundColor: '#07111b',
+    title: 'Easy Stems',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.on('closed', () => { mainWindow = undefined; });
+}
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+}
+
+app.whenReady().then(() => {
+  if (!gotLock) return;
+  createWindow();
+
+  ipcMain.on('window:minimize', () => mainWindow?.minimize());
+  ipcMain.on('window:maximize', () => (mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize()));
+  ipcMain.on('window:close', () => mainWindow?.close());
+
+  /* ---------------------------------------------------------------- *
+   * Stem separation
+   * ---------------------------------------------------------------- */
+
+  const stemFiles = new StemSeparator(app.getPath('userData'));
+  let stemJob = 0;
+  const stemJobs = new Map();
+
+  const startStemWorker = () => {
+    if (stemWorker) return stemWorker;
+    const worker = utilityProcess.fork(path.join(__dirname, 'stemWorker.cjs'), [], { serviceName: 'Easy Stems separation' });
+    worker.on('message', message => {
+      if (message.type === 'progress') {
+        mainWindow?.webContents.send('stems:progress', { stage: message.stage, fraction: message.fraction });
+        return;
+      }
+      const waiting = stemJobs.get(message.job);
+      if (!waiting) return;
+      stemJobs.delete(message.job);
+      if (message.type === 'done') waiting.resolve(message.result);
+      else waiting.reject(new Error(message.message || 'Separation failed.'));
+    });
+    worker.on('exit', () => {
+      if (stemWorker === worker) stemWorker = null;
+      stemJobs.forEach(({ reject }) => reject(new Error('The separation engine stopped unexpectedly. Try again.')));
+      stemJobs.clear();
+    });
+    worker.postMessage({ type: 'init', dataFolder: app.getPath('userData') });
+    stemWorker = worker;
+    return worker;
+  };
+
+  const askStemWorker = message => new Promise((resolve, reject) => {
+    stemJob += 1;
+    stemJobs.set(stemJob, { resolve, reject });
+    startStemWorker().postMessage({ ...message, job: stemJob });
+  });
+
+  ipcMain.handle('stems:status', async () => ({ ...stemFiles.status(), busy: stemJobs.size > 0 }));
+  ipcMain.handle('stems:download', async () => {
+    await askStemWorker({ type: 'download' });
+    return true;
+  });
+  ipcMain.handle('stems:separate', async (_event, left, right) => {
+    if (!(left instanceof ArrayBuffer) || !(right instanceof ArrayBuffer) || left.byteLength !== right.byteLength) {
+      throw new Error('Separation needs two channels of the same length.');
+    }
+    if (stemJobs.size) throw new Error('A song is already being separated.');
+    const result = await askStemWorker({ type: 'separate', left, right });
+    return { id: result.id, cached: result.cached, stems: STEMS };
+  });
+  ipcMain.handle('stems:cancel', async () => { stemWorker?.postMessage({ type: 'cancel' }); });
+  // The renderer names a song by its fingerprint and a stem by name; the path
+  // is built here, so it can never be pointed at anything else on the disk.
+  ipcMain.handle('stems:read', async (_event, id, stem) => {
+    if (!/^[0-9a-f]{20}$/.test(String(id)) || !STEMS.includes(stem)) throw new Error('No such stem.');
+    const bytes = await fs.readFile(stemFiles.cacheFor(id).files[stem]);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  });
+
+  ipcMain.handle('file:save', async (_event, bytes, suggestedName) => {
+    const chosen = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save stem',
+      defaultPath: path.join(app.getPath('music'), suggestedName),
+      filters: [{ name: 'WAV audio', extensions: ['wav'] }],
+    });
+    if (chosen.canceled || !chosen.filePath) return null;
+    await fs.writeFile(chosen.filePath, Buffer.from(bytes));
+    return chosen.filePath;
+  });
+
+  // Saving six files one Save-As dialog at a time is tedious; this asks for
+  // the destination once and writes every stem straight into it.
+  ipcMain.handle('file:save-all', async (_event, files) => {
+    const chosen = await dialog.showOpenDialog(mainWindow, {
+      title: 'Save all stems to…',
+      defaultPath: app.getPath('music'),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (chosen.canceled || !chosen.filePaths[0]) return null;
+    const folder = chosen.filePaths[0];
+    for (const { name, bytes } of files) {
+      await fs.writeFile(path.join(folder, name), Buffer.from(bytes));
+    }
+    shell.showItemInFolder(path.join(folder, files[0]?.name ?? ''));
+    return folder;
+  });
+
+  /* ---------------------------------------------------------------- *
+   * Library
+   * ---------------------------------------------------------------- */
+
+  ipcMain.handle('library:list', async () => readLibrary());
+  ipcMain.handle('library:save', async (_event, entry) => {
+    if (!entry || !/^[0-9a-f]{20}$/.test(String(entry.id))) throw new Error('That song has no stems to remember.');
+    const list = await readLibrary();
+    const next = [{ ...entry, savedAt: new Date().toISOString() }, ...list.filter(item => item.id !== entry.id)];
+    await writeLibrary(next);
+    return next;
+  });
+  ipcMain.handle('library:delete', async (_event, id) => {
+    const list = await readLibrary();
+    const next = list.filter(item => item.id !== id);
+    await writeLibrary(next);
+    return next;
+  });
+});
+
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => stemWorker?.kill());
+app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

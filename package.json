@@ -1,0 +1,45 @@
+{
+  "name": "easy-stems",
+  "productName": "Easy Stems",
+  "description": "Split any song into drums, bass, guitar, keys, vocals and aux — fast, and entirely on your own computer.",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron/main.cjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "dependencies": {
+    "onnxruntime-node": "1.22.0"
+  },
+  "build": {
+    "appId": "studio.amanorsac.easystems",
+    "productName": "Easy Stems",
+    "directories": {
+      "output": "installer",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json",
+      "!node_modules/onnxruntime-node/bin/**/linux/**"
+    ],
+    "asarUnpack": [
+      "node_modules/onnxruntime-node/**",
+      "node_modules/onnxruntime-common/**"
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "${productName}-${version}-Windows.${ext}"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["arm64"] }],
+      "category": "public.app-category.music",
+      "artifactName": "${productName}-${version}-macOS.${ext}"
+    }
+  }
+}

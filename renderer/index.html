@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Easy Stems</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="titlebar">
+    <div class="brand"><span class="mark">▮▮▮▮</span><strong>Easy Stems</strong></div>
+    <div class="window-controls" id="window-controls" hidden>
+      <button id="win-min" aria-label="Minimise">&#8211;</button>
+      <button id="win-max" aria-label="Maximise">&#9633;</button>
+      <button id="win-close" aria-label="Close">&#10005;</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="intro">
+      <h1>Split a song into its instruments</h1>
+      <p>Drums, bass, guitar, keys, vocals and everything else — separated on this computer. Nothing is uploaded anywhere.</p>
+    </div>
+
+    <div class="card">
+      <input id="file-input" type="file" accept="audio/*,video/*" hidden />
+
+      <div id="drop-zone" class="drop-zone">
+        <div class="wave-icon">〜〜〜</div>
+        <h2>Drop a song here</h2>
+        <p>MP3, WAV, M4A or similar.</p>
+        <button id="choose-file" class="primary">Choose a file</button>
+        <div id="intro-error" class="banner error" hidden></div>
+
+        <div id="library" class="library" hidden>
+          <small>Songs you've separated</small>
+          <div id="library-list" class="library-list"></div>
+        </div>
+      </div>
+
+      <div id="song-panel" class="song-panel" hidden>
+        <div class="song-status">
+          <b id="song-name"></b>
+          <small id="song-duration"></small>
+        </div>
+
+        <div class="transport">
+          <button id="play-pause" class="transport-btn play" aria-label="Play">&#9654;</button>
+          <button id="stop" class="transport-btn" aria-label="Stop">&#9632;</button>
+          <span id="time" class="time">0:00 / 0:00</span>
+          <input id="seek" class="seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Seek" />
+          <label class="volume">
+            &#128266;
+            <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume" />
+          </label>
+        </div>
+
+        <div id="separate-row">
+          <p class="hint">
+            Split this into drums, bass, guitar, keys and vocals, plus everything else (synths, pads, extra
+            parts) as Aux. Mute the part you want to play, or solo it to hear it alone. Each stem saves as its own file.
+          </p>
+          <button id="separate" class="primary wide">Separate the instruments</button>
+        </div>
+
+        <div id="progress" class="progress" hidden>
+          <span id="progress-label"></span>
+          <i><em id="progress-bar"></em></i>
+          <button id="cancel" class="subtle">Cancel</button>
+        </div>
+
+        <div id="song-error" class="banner error" hidden></div>
+
+        <div id="mixer" class="mixer" hidden></div>
+        <div id="mixer-actions" class="mixer-actions" hidden>
+          <button id="everyone" class="subtle">Bring everyone back</button>
+          <button id="download-all" class="subtle">Download all six</button>
+        </div>
+
+        <button id="import-another" class="subtle">Import another</button>
+        <button id="close-song" class="subtle">Close this song</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+:root{
+  --bg:#1b1c1e; --panel:#212226; --panel-2:#26282c; --line:#38393e;
+  --teal:#2fd7c4; --teal-dim:#1a9c8f; --amber:#e8b64c; --green:#2fd7c4;
+  --text:#eceef0; --muted:#8b8e94; --danger:#ff6b6b;
+  --mono: 'SF Mono','Consolas',ui-monospace,'Courier New',monospace;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{
+  margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:radial-gradient(ellipse at 50% -10%, #232427 0%, var(--bg) 55%);
+  color:var(--text); display:flex; flex-direction:column; min-height:100vh; user-select:none;
+}
+button{font:inherit;color:inherit;cursor:pointer}
+input{font:inherit}
+
+.titlebar{
+  height:42px; flex:0 0 42px; display:flex; align-items:center; justify-content:space-between;
+  padding:0 14px; -webkit-app-region:drag; border-bottom:1px solid var(--line); background:#1e1f22;
+}
+.brand{display:flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.03em}
+.brand .mark{letter-spacing:-4px;color:var(--teal);transform:scaleX(.7);display:inline-block}
+.window-controls{display:flex;gap:4px;-webkit-app-region:no-drag}
+.window-controls button{width:28px;height:28px;border:0;background:transparent;color:#8b8e94;border-radius:5px}
+.window-controls button:hover{background:#2c2d31}
+#win-close:hover{background:#8a2020;color:#fff}
+
+main{flex:1;overflow:auto;padding:36px 20px 60px;display:flex;flex-direction:column;align-items:center}
+.intro{max-width:640px;text-align:center;margin-bottom:22px}
+.intro h1{font-size:26px;margin:0 0 8px;letter-spacing:-.01em;font-weight:700}
+.intro p{margin:0;color:var(--muted);font-size:13px}
+
+/* A module card, the way RX's plugins are laid out: flat panel, thin border,
+   one quiet accent line to say which module this is. */
+.card{
+  width:100%;max-width:640px;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel);padding:20px;box-shadow:0 12px 32px #0006;position:relative;
+}
+.card:before{
+  content:"";position:absolute;top:0;left:0;right:0;height:2px;border-radius:8px 8px 0 0;
+  background:linear-gradient(90deg,var(--teal),transparent 70%);
+}
+
+/* A faint, static echo of a spectrogram — RX's signature view — behind the
+   drop zone. Decoration only; it never analyses anything real. */
+.drop-zone{
+  min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  text-align:center;border:1px dashed var(--line);border-radius:6px;color:var(--teal);
+  background:
+    linear-gradient(180deg, rgba(19,20,22,.92), rgba(19,20,22,.97)),
+    repeating-linear-gradient(90deg,
+      #1c3a3a 0 3px, #16302f 3px 7px, #123f45 7px 9px, #0f2530 9px 14px,
+      #1c3a3a 14px 18px, #204a48 18px 21px, #0f2530 21px 27px, #16302f 27px 31px);
+  background-blend-mode:normal, screen;
+  padding:24px;
+}
+.drop-zone.drag-over{border-color:var(--teal);box-shadow:inset 0 0 0 1px var(--teal), 0 0 20px rgba(47,215,196,.2)}
+.wave-icon{font-size:26px;letter-spacing:2px;color:var(--teal)}
+.drop-zone h2{margin:0;font-size:18px;color:var(--text)}
+.drop-zone p{margin:0;font-size:12px;color:var(--muted)}
+
+.primary{
+  border:1px solid var(--teal);background:linear-gradient(#33dfcb,#1fb6a4);color:#0b1615;border-radius:5px;
+  padding:11px 16px;font-weight:700;font-size:12px;letter-spacing:.03em;
+}
+.primary:hover{background:linear-gradient(#3ee8d3,#22c2ae)}
+.primary:active{filter:brightness(.92)}
+.primary.wide{width:100%;text-align:center}
+.subtle{
+  width:100%;margin-top:6px;border:1px solid var(--line);background:var(--panel-2);color:#c2c4c8;
+  border-radius:5px;padding:9px 11px;font-size:11px;letter-spacing:.01em;
+}
+.subtle:hover{background:#2e3034;border-color:#46484e}
+.subtle:disabled{opacity:.4;cursor:default}
+
+.banner{margin-top:10px;padding:9px 13px;border-radius:6px;font-size:12px}
+.banner.error{background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.32);color:var(--danger)}
+
+.song-status{display:flex;flex-direction:column;gap:2px;margin-bottom:10px}
+.song-status b{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.song-status small{color:var(--muted);font-size:11px;font-family:var(--mono)}
+
+.transport{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.transport-btn{
+  width:34px;height:34px;border-radius:5px;border:1px solid var(--line);background:var(--panel-2);color:#c2c4c8;
+  display:grid;place-items:center;
+}
+.transport-btn.play{background:linear-gradient(#33dfcb,#1fb6a4);border-color:var(--teal);color:#0b1615}
+.time{font-size:12px;color:#c2c4c8;font-family:var(--mono);font-variant-numeric:tabular-nums;min-width:92px}
+.seek{flex:1;min-width:120px;accent-color:var(--teal)}
+.volume{display:flex;align-items:center;gap:6px;color:var(--muted)}
+.volume input{width:80px;accent-color:var(--teal)}
+
+.hint{font-size:11px;color:var(--muted);line-height:1.6;margin:0 0 10px}
+
+.progress{display:flex;flex-direction:column;gap:6px;margin-top:10px;font-size:11px;color:#c2c4c8;
+  font-family:var(--mono)}
+.progress i{display:block;height:6px;border-radius:4px;background:#141517;overflow:hidden;
+  border:1px solid var(--line)}
+.progress em{
+  display:block;height:100%;border-radius:4px;transition:width .25s;width:0;
+  background:linear-gradient(90deg,var(--teal-dim),var(--teal));
+}
+
+.mixer{display:flex;flex-direction:column;gap:4px;margin-top:14px}
+.stem-row{
+  display:grid;grid-template-columns:8px 34px 1fr auto auto;align-items:center;gap:9px;
+  border:1px solid var(--line);border-radius:6px;background:var(--panel-2);padding:5px 8px 5px 10px;font-size:12px;
+}
+/* A quiet status dot, the way a bypassed RX module dims rather than shouts. */
+.stem-row:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--teal)}
+.stem-row.muted:before{background:#4a4c50}
+.stem-row.muted{opacity:.55}
+.stem-row.muted .stem-name{text-decoration:line-through}
+.mute-btn{
+  width:28px;height:28px;border:1px solid var(--line);background:#1e2023;color:#c2c4c8;border-radius:5px;
+  display:grid;place-items:center;
+}
+.stem-row.muted .mute-btn{color:var(--danger);border-color:#5a2a2a;background:#241717}
+.solo-btn{
+  border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:4px;padding:5px 10px;
+  font-size:10px;text-transform:uppercase;letter-spacing:.06em;
+}
+.solo-btn:hover{background:#2e3034;color:#fff}
+.solo-btn.active{background:#2a2410;border-color:var(--amber);color:var(--amber)}
+.download-btn{border:0;background:transparent;color:#75767c;padding:4px;border-radius:5px}
+.download-btn:hover{color:var(--teal);background:#1c302e}
+
+.mixer-actions{display:flex;gap:8px;margin-top:8px}
+.mixer-actions .subtle{flex:1;margin-top:0}
+
+/* ------------------------------------------------------------------ *
+ * Library
+ * ------------------------------------------------------------------ */
+.library{width:100%;max-width:420px;margin-top:16px;text-align:left}
+.library>small{display:block;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  margin:0 0 7px 2px}
+.library-list{display:flex;flex-direction:column;gap:5px;max-height:220px;overflow:auto}
+.library-item{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px;
+  border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}
+.library-open{border:0;background:transparent;color:inherit;display:flex;flex-direction:column;align-items:flex-start;
+  gap:2px;padding:9px 10px;cursor:pointer;min-width:0;width:100%;text-align:left}
+.library-open:hover{background:#2e3034}
+.library-open b{font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.library-open small{font-size:9px;color:var(--muted);font-family:var(--mono)}
+.library-item .download-btn{margin-right:6px}
+
+@media (max-width:520px){
+  .card{padding:14px}
+  .drop-zone{min-height:220px}
+}
