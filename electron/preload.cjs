@@ -34,7 +34,8 @@ contextBridge.exposeInMainWorld('easyStems', {
   pickFolder: title => ipcRenderer.invoke('file:pick-folder', title),
   writeFiles: (folder, files) => ipcRenderer.invoke('file:write-all', folder, files),
   reveal: target => ipcRenderer.invoke('file:reveal', target),
-  musicFolder: () => ipcRenderer.invoke('app:music-folder'),
+  contentFolder: () => ipcRenderer.invoke('app:content-folder'),
+  appInfo: () => ipcRenderer.invoke('app:info'),
   openExternal: url => ipcRenderer.invoke('app:open-external', url),
 
   /* Library. */

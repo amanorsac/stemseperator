@@ -57,6 +57,7 @@ const state = {
   batch: [],
   batchRunning: false,
   models: { modelReady: false, karaokeReady: false },
+  contentFolder: '',
 };
 
 const player = new Player();
@@ -80,14 +81,52 @@ function toast(message, isError = false) {
   node.classList.toggle('error', isError);
   node.hidden = false;
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => { node.hidden = true; }, isError ? 7000 : 4000);
+  // The studio's contract says 1.5 to 3 seconds; an error gets the long end
+  // twice, because it has to be read, not just noticed.
+  toastTimer = window.setTimeout(() => { node.hidden = true; }, isError ? 6000 : 3000);
+}
+
+/* ------------------------------------------------------------------ *
+ * Dropdown: the product's own, never the OS control. A button that opens
+ * a list; arrow keys move, Enter picks, Escape closes.
+ * ------------------------------------------------------------------ */
+const dropdowns = {};
+function initDropdown(id, onChange) {
+  const host = el(id);
+  const options = JSON.parse(host.dataset.options);
+  const dd = { value: options[0][0], options, onChange, host };
+  host.innerHTML = `<button type="button" class="dropdown-btn" aria-haspopup="listbox" aria-expanded="false"><em></em>${icon('chevron-down', 16)}</button>
+    <ul class="dropdown-list" role="listbox" hidden></ul>`;
+  const button = host.querySelector('.dropdown-btn');
+  const list = host.querySelector('.dropdown-list');
+  if (host.getAttribute('aria-labelledby')) button.setAttribute('aria-labelledby', host.getAttribute('aria-labelledby'));
+  const label = () => (options.find(([value]) => value === dd.value) || options[0])[1];
+  const paint = () => {
+    button.querySelector('em').textContent = label();
+    list.innerHTML = options.map(([value, text]) => `<li role="option" data-value="${value}" aria-selected="${value === dd.value}">${text}</li>`).join('');
+    list.querySelectorAll('li').forEach(item => item.addEventListener('click', () => choose(item.dataset.value)));
+  };
+  const close = () => { list.hidden = true; host.classList.remove('open'); button.setAttribute('aria-expanded', 'false'); };
+  const open = () => { paint(); list.hidden = false; host.classList.add('open'); button.setAttribute('aria-expanded', 'true'); };
+  const choose = value => { const changed = value !== dd.value; dd.value = value; paint(); close(); button.focus(); if (changed) onChange?.(value); };
+  button.addEventListener('click', event => { event.stopPropagation(); list.hidden ? open() : close(); });
+  button.addEventListener('keydown', event => {
+    const index = options.findIndex(([value]) => value === dd.value);
+    if (event.key === 'ArrowDown') { event.preventDefault(); choose(options[Math.min(options.length - 1, index + 1)][0]); }
+    if (event.key === 'ArrowUp') { event.preventDefault(); choose(options[Math.max(0, index - 1)][0]); }
+    if (event.key === 'Escape') close();
+  });
+  document.addEventListener('click', close);
+  Object.defineProperty(dd, 'set', { value: value => { dd.value = String(value); paint(); } });
+  paint();
+  dropdowns[id] = dd;
+  return dd;
 }
 
 const cleanError = error => (error && error.message ? error.message : String(error))
   .replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 const baseName = name => name.replace(/\.[^.]+$/, '');
-const folderOf = filePath => filePath.replace(/[\\/][^\\/]*$/, '');
 
 function setWorking(next) {
   state.working = next;
@@ -347,12 +386,14 @@ function mixLabel(stems) {
   return on.map(stem => stem.label).join(' + ');
 }
 
-async function resolveOutputFolder() {
-  if (settings.outputFolder) return settings.outputFolder;
-  if (state.song?.path) return folderOf(state.song.path);
-  const chosen = await bridge.pickFolder('Where should the stems go?');
-  if (chosen) { settings.outputFolder = chosen; saveSettings(); renderExport(); }
-  return chosen;
+/**
+ * Where a song's exports go: a folder of its own under the person's Easy
+ * Stems content folder (Documents/Amanorsac Studio/Easy Stems), unless they
+ * chose somewhere else in Settings.
+ */
+async function resolveOutputFolder(songName) {
+  const root = settings.outputFolder || await bridge.contentFolder();
+  return `${root}/${songName}`;
 }
 
 /** Encode stems (or a mix) at the chosen rate and depth. */
@@ -369,8 +410,7 @@ async function exportNow(overrideMode, only) {
   const files = [];
   setWorking({ label: 'Exporting…', sub: 'Writing the files.', progress: 0, cancellable: false });
   try {
-    const folder = await resolveOutputFolder();
-    if (!folder) { setWorking(null); return; }
+    const folder = await resolveOutputFolder(name);
     if (mode === 'stems') {
       const chosen = only ? state.stems.filter(stem => stem.key === only) : state.stems.filter(stem => stem.on);
       if (!chosen.length) throw new Error('Switch on at least one stem to export.');
@@ -443,7 +483,7 @@ async function runBatch() {
       });
       item.note = 'Saving the stems';
       renderBatch();
-      const folder = `${settings.outputFolder || (item.path ? folderOf(item.path) : await bridge.musicFolder())}/${item.name} - Stems`;
+      const folder = await resolveOutputFolder(item.name);
       const order = split ? ORDER_SPLIT : ORDER_PLAIN;
       const files = [];
       for (const key of order) {
@@ -639,16 +679,16 @@ function openMenu(anchor, key) {
 function closeMenu() { el('menu').hidden = true; }
 
 function renderExport() {
-  el('export-rate').value = String(settings.sampleRate);
-  el('export-bits').value = String(settings.bitDepth);
-  el('export-folder-label').textContent = settings.outputFolder || (state.song?.path ? 'Same as source' : 'Ask me where');
+  dropdowns['export-rate']?.set(settings.sampleRate);
+  dropdowns['export-bits']?.set(settings.bitDepth);
+  el('export-folder-label').textContent = settings.outputFolder || state.contentFolder || 'Documents / Amanorsac Studio / Easy Stems';
   el('export-mode').querySelectorAll('button').forEach(button => button.classList.toggle('active', button.dataset.mode === settings.exportMode));
   const on = state.stems.filter(stem => stem.on).length;
   el('export-now-label').textContent = settings.exportMode === 'stems'
     ? `Export ${on} Stem${on === 1 ? '' : 's'}`
     : `Export: ${mixLabel(state.stems)}`;
   el('export-now').disabled = on === 0;
-  el('batch-folder-label').textContent = settings.outputFolder || 'Same folder as each song';
+  el('batch-folder-label').textContent = settings.outputFolder || state.contentFolder || 'Documents / Amanorsac Studio / Easy Stems';
 }
 
 function renderLibrary() {
@@ -693,9 +733,9 @@ function renderBatch() {
 }
 
 async function renderSettings() {
-  el('settings-folder-label').textContent = settings.outputFolder || 'Same as source';
-  el('settings-rate').value = String(settings.sampleRate);
-  el('settings-bits').value = String(settings.bitDepth);
+  el('settings-folder-label').textContent = settings.outputFolder || state.contentFolder || 'Documents / Amanorsac Studio / Easy Stems';
+  dropdowns['settings-rate']?.set(settings.sampleRate);
+  dropdowns['settings-bits']?.set(settings.bitDepth);
   el('settings-split').classList.toggle('on', settings.splitVocals);
   el('settings-split').setAttribute('aria-checked', String(settings.splitVocals));
   if (!bridge?.stemStatus) return;
@@ -806,8 +846,9 @@ el('export-mode').querySelectorAll('button').forEach(button => button.addEventLi
   saveSettings();
   renderExport();
 }));
-el('export-rate').addEventListener('change', () => { settings.sampleRate = Number(el('export-rate').value); saveSettings(); });
-el('export-bits').addEventListener('change', () => { settings.bitDepth = Number(el('export-bits').value); saveSettings(); });
+initDropdown('export-format');
+initDropdown('export-rate', value => { settings.sampleRate = Number(value); saveSettings(); });
+initDropdown('export-bits', value => { settings.bitDepth = Number(value); saveSettings(); });
 el('export-folder').addEventListener('click', async () => {
   const chosen = await bridge?.pickFolder?.('Where should exports go?');
   if (chosen) { settings.outputFolder = chosen; saveSettings(); renderExport(); }
@@ -831,8 +872,8 @@ el('settings-folder').addEventListener('click', async () => {
   if (chosen) { settings.outputFolder = chosen; saveSettings(); void renderSettings(); renderExport(); }
 });
 el('settings-folder-reset').addEventListener('click', () => { settings.outputFolder = ''; saveSettings(); void renderSettings(); renderExport(); });
-el('settings-rate').addEventListener('change', () => { settings.sampleRate = Number(el('settings-rate').value); saveSettings(); renderExport(); });
-el('settings-bits').addEventListener('change', () => { settings.bitDepth = Number(el('settings-bits').value); saveSettings(); renderExport(); });
+initDropdown('settings-rate', value => { settings.sampleRate = Number(value); saveSettings(); renderExport(); });
+initDropdown('settings-bits', value => { settings.bitDepth = Number(value); saveSettings(); renderExport(); });
 el('settings-split').addEventListener('click', () => { settings.splitVocals = !settings.splitVocals; saveSettings(); void renderSettings(); });
 const downloadModel = async (which) => {
   if (!bridge) return;
@@ -871,6 +912,22 @@ if (bridge?.isDesktop) {
   el('win-max').addEventListener('click', () => bridge.maximize());
   el('win-close').addEventListener('click', () => bridge.close());
 }
+
+// The About screen's facts, and where exports go, from the main process.
+void (async () => {
+  if (!bridge?.appInfo) return;
+  try {
+    const info = await bridge.appInfo();
+    state.contentFolder = info.contentFolder;
+    el('about-version').textContent = `Version ${info.version} · ${info.platform === 'win32' ? 'Windows' : info.platform === 'darwin' ? 'macOS' : 'Linux'}`;
+    el('about-content').textContent = info.contentFolder;
+    renderExport();
+  } catch { /* the defaults stand */ }
+})();
+document.querySelectorAll('[data-external]').forEach(link => link.addEventListener('click', event => {
+  event.preventDefault();
+  void bridge?.openExternal?.(link.dataset.external);
+}));
 
 renderExport();
 renderBatch();

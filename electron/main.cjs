@@ -15,6 +15,20 @@ const { StemSeparator, STEMS, ALL_STEMS } = require('./stems.cjs');
 let mainWindow;
 let stemWorker = null;
 
+/**
+ * Where the app keeps things, as the studio's File & Data Conventions fix it.
+ * Two places and nothing anywhere else: what the person made, in their
+ * Documents, and the machine's own state, out of their way.
+ */
+const COMPANY = 'Amanorsac Studio';
+const PRODUCT = 'Easy Stems';
+const contentFolder = () => path.join(app.getPath('documents'), COMPANY, PRODUCT);
+const stateFolder = () => (process.platform === 'win32'
+  ? path.join(process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'), COMPANY, PRODUCT)
+  : path.join(app.getPath('appData'), COMPANY, PRODUCT));
+// A test run names its own folder on the command line; leave that alone.
+if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', stateFolder());
+
 /* ---------------------------------------------------------------- *
  * The library: songs already separated, kept as small facts rather than a
  * second copy of the audio — reopening one just sums its cached stems.
@@ -178,7 +192,7 @@ app.whenReady().then(() => {
   ipcMain.handle('file:save-all', async (_event, files) => {
     const chosen = await dialog.showOpenDialog(mainWindow, {
       title: 'Save all stems to…',
-      defaultPath: app.getPath('music'),
+      defaultPath: contentFolder(),
       properties: ['openDirectory', 'createDirectory'],
     });
     if (chosen.canceled || !chosen.filePaths[0]) return null;
@@ -193,7 +207,7 @@ app.whenReady().then(() => {
   ipcMain.handle('file:pick-folder', async (_event, title) => {
     const chosen = await dialog.showOpenDialog(mainWindow, {
       title: title || 'Choose a folder',
-      defaultPath: app.getPath('music'),
+      defaultPath: contentFolder(),
       properties: ['openDirectory', 'createDirectory'],
     });
     return chosen.canceled ? null : chosen.filePaths[0] || null;
@@ -218,9 +232,22 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('file:reveal', async (_event, target) => { shell.showItemInFolder(String(target)); });
-  ipcMain.handle('app:music-folder', async () => app.getPath('music'));
+  // The place exports go unless the person picks another: their own content
+  // folder, per the studio's conventions.
+  ipcMain.handle('app:content-folder', async () => {
+    await fs.mkdir(contentFolder(), { recursive: true });
+    return contentFolder();
+  });
+  ipcMain.handle('app:info', async () => ({
+    product: PRODUCT,
+    company: COMPANY,
+    version: app.getVersion(),
+    platform: process.platform,
+    contentFolder: contentFolder(),
+    stateFolder: app.getPath('userData'),
+  }));
   ipcMain.handle('app:open-external', async (_event, url) => {
-    if (!/^https:\/\//.test(String(url))) return;
+    if (!/^(https:\/\/|mailto:)/.test(String(url))) return;
     await shell.openExternal(String(url));
   });
 

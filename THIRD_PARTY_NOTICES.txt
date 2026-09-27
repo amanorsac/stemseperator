@@ -1,0 +1,32 @@
+Easy Stems — third-party notices
+
+Easy Stems is built on the following open-source work. None of it restricts
+commercial use.
+
+HT-Demucs (model weights, ONNX export)
+  Meta AI Research; ONNX export by StemSplit. MIT License.
+  https://github.com/facebookresearch/demucs
+
+UVR MDX-Net Karaoke 2 (model weights)
+  Ultimate Vocal Remover project. MIT License.
+  https://github.com/Anjok07/ultimatevocalremovergui
+
+ONNX Runtime (onnxruntime-node)
+  Microsoft. MIT License.
+  https://github.com/microsoft/onnxruntime
+
+Electron
+  OpenJS Foundation and contributors. MIT License.
+  https://github.com/electron/electron
+
+Lucide icons
+  Lucide Contributors. ISC License.
+  https://lucide.dev
+
+Inter (typeface)
+  Rasmus Andersson. SIL Open Font License 1.1.
+  See renderer/fonts/LICENSE-Inter.txt
+
+JetBrains Mono (typeface)
+  JetBrains. SIL Open Font License 1.1.
+  See renderer/fonts/LICENSE-JetBrainsMono.txt

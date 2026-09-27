@@ -55,6 +55,41 @@ npx electron-builder --mac dmg    # macOS; must be run on a Mac
 A macOS `.dmg` can only be built on macOS. From Linux or Windows,
 `npx electron-builder --mac -c.mac.target=zip` produces the app as a zip.
 
+## Where it stands against the studio standards
+
+Done, per the Master Standard and File & Data Conventions:
+
+- Data paths: exports under `Documents/Amanorsac Studio/Easy Stems/<song>/`;
+  models, the separated-song cache, the library and settings under
+  `%LOCALAPPDATA%\Amanorsac Studio\Easy Stems` (macOS: `~/Library/Application
+  Support/Amanorsac Studio/Easy Stems`). Nothing written anywhere else.
+- About screen (Help & Support): product and version, the studio lockup,
+  legal and privacy links, the support address, licence status, third-party
+  notices. The lockup is the wordmark set in type; swap in the official
+  artwork from `_shared/brand` when it's supplied.
+- Inter for the interface, JetBrains Mono for numbers, both shipped in
+  `renderer/fonts/`. No font is fetched at runtime.
+- Dropdowns are the product's own control, not the OS's. Every control has
+  a visible focus state and an accessible name; `prefers-reduced-motion`
+  is honoured. Toasts run 3 seconds.
+- No analytics, no crash reporting, no updater, no "Aquarii Audio".
+
+Open, for the studio to decide before release:
+
+- **App id and key prefix** — assigned by the studio (§2 of the conventions).
+  `easystems` is used as a placeholder in `package.json`.
+- **Licensing** — not integrated yet, on purpose, until testing is done. The
+  About screen says "Test build — not licensed". Integration follows the
+  License Integration Standard when the studio gives the go-ahead.
+- **Model downloads vs. the privacy policy** — Master Standard §7 says an
+  unlicensed product makes no network requests. This build downloads its two
+  models (about 190 MB) from Hugging Face and GitHub the first time they're
+  needed. The compliant fix is to bundle them in the installer (it grows to
+  roughly 320 MB); the alternative is a documented exception. Either is a
+  studio call.
+- **Signing and notarisation** — the installers here are unsigned test
+  builds, not release candidates.
+
 ## How it's built
 
 - `electron/main.cjs` — the app's window, the library, and the IPC bridge.

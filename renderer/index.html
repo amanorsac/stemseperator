@@ -126,17 +126,17 @@
               <button data-mode="mix">One mix</button>
             </div>
           </div>
-          <label class="field"><span>Format</span>
-            <select id="export-format"><option value="wav">WAV</option></select>
-          </label>
-          <label class="field"><span>Sample Rate</span>
-            <select id="export-rate"><option value="44100">44.1 kHz</option><option value="48000">48 kHz</option></select>
-          </label>
-          <label class="field"><span>Bit Depth</span>
-            <select id="export-bits"><option value="16">16 bit</option><option value="24">24 bit</option></select>
-          </label>
+          <div class="field"><span id="lbl-format">Format</span>
+            <div class="dropdown" id="export-format" data-options='[["wav","WAV"]]' aria-labelledby="lbl-format"></div>
+          </div>
+          <div class="field"><span id="lbl-rate">Sample Rate</span>
+            <div class="dropdown" id="export-rate" data-options='[["44100","44.1 kHz"],["48000","48 kHz"]]' aria-labelledby="lbl-rate"></div>
+          </div>
+          <div class="field"><span id="lbl-bits">Bit Depth</span>
+            <div class="dropdown" id="export-bits" data-options='[["16","16 bit"],["24","24 bit"]]' aria-labelledby="lbl-bits"></div>
+          </div>
           <div class="field"><span>Output Folder</span>
-            <button class="folder-btn" id="export-folder"><span data-icon="folder"></span><em id="export-folder-label">Same as source</em><span data-icon="chevron-down"></span></button>
+            <button class="folder-btn" id="export-folder" title="Choose a different folder"><span data-icon="folder"></span><em id="export-folder-label">Documents / Amanorsac Studio / Easy Stems</em><span data-icon="chevron-down"></span></button>
           </div>
           <button class="primary big" id="export-now"><span data-icon="upload"></span><span id="export-now-label">Export Stems</span></button>
         </section>
@@ -181,17 +181,17 @@
           <div class="setting">
             <div><b>Output folder</b><small>Where exported stems and batch results are saved.</small></div>
             <div class="setting-ctl">
-              <button class="folder-btn" id="settings-folder"><span data-icon="folder"></span><em id="settings-folder-label">Same as source</em></button>
-              <button class="ghost small" id="settings-folder-reset">Use song's folder</button>
+              <button class="folder-btn" id="settings-folder"><span data-icon="folder"></span><em id="settings-folder-label">Documents / Amanorsac Studio / Easy Stems</em></button>
+              <button class="ghost small" id="settings-folder-reset">Use the default</button>
             </div>
           </div>
           <div class="setting">
-            <div><b>Sample rate</b><small>44.1 kHz matches what the models produce; 48 kHz for video work.</small></div>
-            <select id="settings-rate"><option value="44100">44.1 kHz</option><option value="48000">48 kHz</option></select>
+            <div><b id="lbl-srate">Sample rate</b><small>44.1 kHz matches what the models produce; 48 kHz for video work.</small></div>
+            <div class="dropdown" id="settings-rate" data-options='[["44100","44.1 kHz"],["48000","48 kHz"]]' aria-labelledby="lbl-srate"></div>
           </div>
           <div class="setting">
-            <div><b>Bit depth</b><small>16-bit is CD quality; 24-bit leaves headroom for mixing.</small></div>
-            <select id="settings-bits"><option value="16">16 bit</option><option value="24">24 bit</option></select>
+            <div><b id="lbl-sbits">Bit depth</b><small>16-bit is CD quality; 24-bit leaves headroom for mixing.</small></div>
+            <div class="dropdown" id="settings-bits" data-options='[["16","16 bit"],["24","24 bit"]]' aria-labelledby="lbl-sbits"></div>
           </div>
         </div>
 
@@ -233,6 +233,50 @@
             <p>How it works, what to expect, and what to do when something's off.</p>
           </div>
         </header>
+
+        <div class="card about-card" id="about">
+          <div class="about-head">
+            <div class="lockup" aria-label="Amanorsac Studio"><span class="lockup-mark" data-icon="audio-lines"></span><span class="lockup-word">AMANORSAC<b>STUDIO</b></span></div>
+            <div class="about-product">
+              <b id="about-product">Easy Stems</b>
+              <small id="about-version">Version —</small>
+            </div>
+          </div>
+          <div class="about-grid">
+            <div class="about-item">
+              <small>Licence</small>
+              <b id="about-licence">Test build — not licensed</b>
+              <span>Licensing is added before release, per the studio's License Integration Standard.</span>
+            </div>
+            <div class="about-item">
+              <small>Support</small>
+              <b><a href="#" data-external="mailto:hello@amanorsac.studio" id="about-support">hello@amanorsac.studio</a></b>
+              <span>One address for every Amanorsac Studio product.</span>
+            </div>
+            <div class="about-item">
+              <small>Legal</small>
+              <b><a href="#" data-external="https://amanorsac.studio/legal">EULA &amp; Terms</a> · <a href="#" data-external="https://amanorsac.studio/privacy">Privacy</a></b>
+              <span>Your audio never leaves this computer. The only network use is downloading the models.</span>
+            </div>
+            <div class="about-item">
+              <small>Your files</small>
+              <b id="about-content">Documents / Amanorsac Studio / Easy Stems</b>
+              <span>Exports. Separated songs and models are kept in the app's own data folder.</span>
+            </div>
+          </div>
+          <details class="notices">
+            <summary>Third-party and open-source notices</summary>
+            <ul>
+              <li><b>HT-Demucs</b> — Meta AI Research; ONNX export by StemSplit. MIT.</li>
+              <li><b>UVR MDX-Net Karaoke 2</b> — Ultimate Vocal Remover project. MIT.</li>
+              <li><b>ONNX Runtime</b> — Microsoft. MIT.</li>
+              <li><b>Electron</b> — OpenJS Foundation. MIT.</li>
+              <li><b>Lucide</b> icons — ISC.</li>
+              <li><b>Inter</b> and <b>JetBrains Mono</b> typefaces — SIL Open Font License 1.1.</li>
+            </ul>
+          </details>
+        </div>
+
         <div class="card help-card">
           <h3>How it works</h3>
           <p>Open a song and it's fed through HT-Demucs, Meta's separation network, which pulls out drums, bass, guitar, keys, vocals and everything else. The vocals then go through a second model, trained for karaoke, which lifts the lead singer off the backing vocals. Everything runs on your own computer; no audio ever leaves it.</p>
