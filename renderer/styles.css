@@ -1,152 +1,150 @@
 :root{
-  --bg:#1b1c1e; --panel:#212226; --panel-2:#26282c; --line:#38393e;
-  --teal:#2fd7c4; --teal-dim:#1a9c8f; --amber:#e8b64c; --green:#2fd7c4;
-  --text:#eceef0; --muted:#8b8e94; --danger:#ff6b6b;
-  --mono: 'SF Mono','Consolas',ui-monospace,'Courier New',monospace;
+  --bg:#f5f5f7; --panel:#ffffff; --panel-2:#fbfbfd; --line:#d2d2d7;
+  --blue:#0071e3; --blue-dim:#0058b0;
+  --text:#1d1d1f; --muted:#6e6e73; --muted-2:#86868b;
+  --danger:#ff3b30; --green:#30d158; --amber:#ff9f0a;
+  --font: -apple-system,BlinkMacSystemFont,'SF Pro Display','Inter',system-ui,sans-serif;
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{height:100%}
 body{
-  margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  background:radial-gradient(ellipse at 50% -10%, #232427 0%, var(--bg) 55%);
-  color:var(--text); display:flex; flex-direction:column; min-height:100vh; user-select:none;
+  margin:0; font:15px/1.5 var(--font);
+  background:var(--bg); color:var(--text); display:flex; flex-direction:column; min-height:100vh;
+  user-select:none; -webkit-font-smoothing:antialiased;
 }
 button{font:inherit;color:inherit;cursor:pointer}
 input{font:inherit}
 
 .titlebar{
-  height:42px; flex:0 0 42px; display:flex; align-items:center; justify-content:space-between;
-  padding:0 14px; -webkit-app-region:drag; border-bottom:1px solid var(--line); background:#1e1f22;
+  height:44px; flex:0 0 44px; display:flex; align-items:center; justify-content:center; position:relative;
+  -webkit-app-region:drag; background:rgba(255,255,255,.8); backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--line);
 }
-.brand{display:flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.03em}
-.brand .mark{letter-spacing:-4px;color:var(--teal);transform:scaleX(.7);display:inline-block}
-.window-controls{display:flex;gap:4px;-webkit-app-region:no-drag}
-.window-controls button{width:28px;height:28px;border:0;background:transparent;color:#8b8e94;border-radius:5px}
-.window-controls button:hover{background:#2c2d31}
-#win-close:hover{background:#8a2020;color:#fff}
+.brand{font-size:13px; font-weight:600; letter-spacing:-.01em; color:var(--text)}
 
-main{flex:1;overflow:auto;padding:36px 20px 60px;display:flex;flex-direction:column;align-items:center}
-.intro{max-width:640px;text-align:center;margin-bottom:22px}
-.intro h1{font-size:26px;margin:0 0 8px;letter-spacing:-.01em;font-weight:700}
-.intro p{margin:0;color:var(--muted);font-size:13px}
+/* macOS-style traffic lights, top-left — a deliberate wink at the platform
+   this whole look is borrowed from, not an attempt to impersonate it. */
+.window-controls{position:absolute;left:14px;top:0;bottom:0;display:flex;align-items:center;gap:8px;
+  -webkit-app-region:no-drag}
+.dot{width:12px;height:12px;border-radius:50%;border:0;padding:0;position:relative}
+.dot-red{background:#ff5f57}
+.dot-yellow{background:#febc2e}
+.dot-green{background:#28c840}
+.dot:hover:after{content:"";position:absolute;inset:0;border-radius:50%;background:#0002}
 
-/* A module card, the way RX's plugins are laid out: flat panel, thin border,
-   one quiet accent line to say which module this is. */
+main{flex:1;overflow:auto;padding:48px 20px 70px;display:flex;flex-direction:column;align-items:center}
+.intro{max-width:600px;text-align:center;margin-bottom:28px}
+.intro h1{font-size:32px;margin:0 0 10px;letter-spacing:-.02em;font-weight:700;color:var(--text)}
+.intro p{margin:0;color:var(--muted);font-size:14px}
+
 .card{
-  width:100%;max-width:640px;border:1px solid var(--line);border-radius:8px;
-  background:var(--panel);padding:20px;box-shadow:0 12px 32px #0006;position:relative;
-}
-.card:before{
-  content:"";position:absolute;top:0;left:0;right:0;height:2px;border-radius:8px 8px 0 0;
-  background:linear-gradient(90deg,var(--teal),transparent 70%);
+  width:100%;max-width:600px;border-radius:22px;background:var(--panel);padding:26px;
+  box-shadow:0 1px 2px #0000000a, 0 20px 50px #00000014;
 }
 
-/* A faint, static echo of a spectrogram — RX's signature view — behind the
-   drop zone. Decoration only; it never analyses anything real. */
 .drop-zone{
   min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
-  text-align:center;border:1px dashed var(--line);border-radius:6px;color:var(--teal);
-  background:
-    linear-gradient(180deg, rgba(19,20,22,.92), rgba(19,20,22,.97)),
-    repeating-linear-gradient(90deg,
-      #1c3a3a 0 3px, #16302f 3px 7px, #123f45 7px 9px, #0f2530 9px 14px,
-      #1c3a3a 14px 18px, #204a48 18px 21px, #0f2530 21px 27px, #16302f 27px 31px);
-  background-blend-mode:normal, screen;
-  padding:24px;
+  text-align:center;border:1.5px dashed var(--line);border-radius:18px;color:var(--blue);
+  background:var(--panel-2);padding:24px;transition:background .15s,border-color .15s;
 }
-.drop-zone.drag-over{border-color:var(--teal);box-shadow:inset 0 0 0 1px var(--teal), 0 0 20px rgba(47,215,196,.2)}
-.wave-icon{font-size:26px;letter-spacing:2px;color:var(--teal)}
-.drop-zone h2{margin:0;font-size:18px;color:var(--text)}
-.drop-zone p{margin:0;font-size:12px;color:var(--muted)}
+.drop-zone.drag-over{border-color:var(--blue);background:#0071e30d}
+.wave-icon{font-size:24px;letter-spacing:2px;color:var(--blue)}
+.drop-zone h2{margin:0;font-size:20px;color:var(--text);font-weight:600}
+.drop-zone p{margin:0;font-size:13px;color:var(--muted)}
 
 .primary{
-  border:1px solid var(--teal);background:linear-gradient(#33dfcb,#1fb6a4);color:#0b1615;border-radius:5px;
-  padding:11px 16px;font-weight:700;font-size:12px;letter-spacing:.03em;
+  border:0;background:var(--blue);color:#fff;border-radius:980px;
+  padding:12px 20px;font-weight:600;font-size:14px;letter-spacing:-.01em;
+  transition:background .15s;
 }
-.primary:hover{background:linear-gradient(#3ee8d3,#22c2ae)}
-.primary:active{filter:brightness(.92)}
+.primary:hover{background:var(--blue-dim)}
+.primary:active{filter:brightness(.95)}
 .primary.wide{width:100%;text-align:center}
 .subtle{
-  width:100%;margin-top:6px;border:1px solid var(--line);background:var(--panel-2);color:#c2c4c8;
-  border-radius:5px;padding:9px 11px;font-size:11px;letter-spacing:.01em;
+  width:100%;margin-top:6px;border:0;background:var(--panel-2);color:var(--text);
+  border-radius:980px;padding:10px 14px;font-size:13px;font-weight:500;transition:background .15s;
 }
-.subtle:hover{background:#2e3034;border-color:#46484e}
+.subtle:hover{background:#e8e8ed}
 .subtle:disabled{opacity:.4;cursor:default}
 
-.banner{margin-top:10px;padding:9px 13px;border-radius:6px;font-size:12px}
-.banner.error{background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.32);color:var(--danger)}
+.banner{margin-top:10px;padding:10px 14px;border-radius:12px;font-size:13px}
+.banner.error{background:#ff3b300f;border:1px solid #ff3b3030;color:#d70015}
 
-.song-status{display:flex;flex-direction:column;gap:2px;margin-bottom:10px}
-.song-status b{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.song-status small{color:var(--muted);font-size:11px;font-family:var(--mono)}
+.song-status{display:flex;flex-direction:column;gap:2px;margin-bottom:14px}
+.song-status b{font-size:17px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.song-status small{color:var(--muted);font-size:12px}
 
-.transport{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.transport{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
 .transport-btn{
-  width:34px;height:34px;border-radius:5px;border:1px solid var(--line);background:var(--panel-2);color:#c2c4c8;
-  display:grid;place-items:center;
+  width:36px;height:36px;border-radius:50%;border:0;background:var(--panel-2);color:var(--text);
+  display:grid;place-items:center;transition:background .15s;
 }
-.transport-btn.play{background:linear-gradient(#33dfcb,#1fb6a4);border-color:var(--teal);color:#0b1615}
-.time{font-size:12px;color:#c2c4c8;font-family:var(--mono);font-variant-numeric:tabular-nums;min-width:92px}
-.seek{flex:1;min-width:120px;accent-color:var(--teal)}
-.volume{display:flex;align-items:center;gap:6px;color:var(--muted)}
-.volume input{width:80px;accent-color:var(--teal)}
+.transport-btn:hover{background:#e8e8ed}
+.transport-btn.play{background:var(--blue);color:#fff}
+.transport-btn.play:hover{background:var(--blue-dim)}
+.time{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:88px}
+.seek{flex:1;min-width:120px;accent-color:var(--blue)}
+.volume{display:flex;align-items:center;gap:6px;color:var(--muted-2);font-size:14px}
+.volume input{width:80px;accent-color:var(--blue)}
 
-.hint{font-size:11px;color:var(--muted);line-height:1.6;margin:0 0 10px}
+.hint{font-size:12px;color:var(--muted);line-height:1.6;margin:8px 0 0}
 
-.progress{display:flex;flex-direction:column;gap:6px;margin-top:10px;font-size:11px;color:#c2c4c8;
-  font-family:var(--mono)}
-.progress i{display:block;height:6px;border-radius:4px;background:#141517;overflow:hidden;
-  border:1px solid var(--line)}
-.progress em{
-  display:block;height:100%;border-radius:4px;transition:width .25s;width:0;
-  background:linear-gradient(90deg,var(--teal-dim),var(--teal));
-}
+.progress{display:flex;flex-direction:column;gap:8px;margin-top:12px;font-size:12px;color:var(--muted)}
+.progress i{display:block;height:5px;border-radius:5px;background:var(--line);overflow:hidden}
+.progress em{display:block;height:100%;border-radius:5px;transition:width .25s;width:0;background:var(--blue)}
 
-.mixer{display:flex;flex-direction:column;gap:4px;margin-top:14px}
+.mixer{display:flex;flex-direction:column;gap:1px;margin-top:16px;border-radius:14px;overflow:hidden;
+  background:var(--line)}
 .stem-row{
-  display:grid;grid-template-columns:8px 34px 1fr auto auto;align-items:center;gap:9px;
-  border:1px solid var(--line);border-radius:6px;background:var(--panel-2);padding:5px 8px 5px 10px;font-size:12px;
+  display:grid;grid-template-columns:44px 1fr auto auto;align-items:center;gap:12px;
+  background:var(--panel);padding:11px 14px;font-size:14px;
 }
-/* A quiet status dot, the way a bypassed RX module dims rather than shouts. */
-.stem-row:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--teal)}
-.stem-row.muted:before{background:#4a4c50}
-.stem-row.muted{opacity:.55}
-.stem-row.muted .stem-name{text-decoration:line-through}
-.mute-btn{
-  width:28px;height:28px;border:1px solid var(--line);background:#1e2023;color:#c2c4c8;border-radius:5px;
-  display:grid;place-items:center;
-}
-.stem-row.muted .mute-btn{color:var(--danger);border-color:#5a2a2a;background:#241717}
-.solo-btn{
-  border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:4px;padding:5px 10px;
-  font-size:10px;text-transform:uppercase;letter-spacing:.06em;
-}
-.solo-btn:hover{background:#2e3034;color:#fff}
-.solo-btn.active{background:#2a2410;border-color:var(--amber);color:var(--amber)}
-.download-btn{border:0;background:transparent;color:#75767c;padding:4px;border-radius:5px}
-.download-btn:hover{color:var(--teal);background:#1c302e}
+.stem-row.muted .stem-name{color:var(--muted)}
 
+/* An iOS-style switch: the natural way to say "on" without shouting it. */
+.mute-btn{
+  width:40px;height:24px;border-radius:999px;border:0;background:var(--green);position:relative;
+  transition:background .15s;flex:0 0 40px;
+}
+.mute-btn:before{
+  content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 3px #0003;transition:transform .15s;
+}
+.stem-row.muted .mute-btn{background:var(--line)}
+.stem-row.muted .mute-btn:before{transform:translateX(16px)}
+
+.solo-btn{
+  border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:980px;padding:5px 12px;
+  font-size:11px;font-weight:600;letter-spacing:.02em;transition:background .15s,color .15s,border-color .15s;
+}
+.solo-btn:hover{background:var(--panel-2)}
+.solo-btn.active{background:var(--amber);border-color:var(--amber);color:#fff}
+.download-btn{border:0;background:transparent;color:var(--muted-2);padding:5px;border-radius:8px}
+.download-btn:hover{color:var(--blue);background:#0071e314}
+
+.export-row{margin-top:16px}
 .mixer-actions{display:flex;gap:8px;margin-top:8px}
 .mixer-actions .subtle{flex:1;margin-top:0}
 
 /* ------------------------------------------------------------------ *
  * Library
  * ------------------------------------------------------------------ */
-.library{width:100%;max-width:420px;margin-top:16px;text-align:left}
-.library>small{display:block;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
-  margin:0 0 7px 2px}
-.library-list{display:flex;flex-direction:column;gap:5px;max-height:220px;overflow:auto}
-.library-item{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px;
-  border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}
+.library{width:100%;max-width:420px;margin-top:18px;text-align:left}
+.library>small{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--muted-2);margin:0 0 8px 2px}
+.library-list{display:flex;flex-direction:column;gap:1px;max-height:220px;overflow:auto;border-radius:12px;
+  overflow:hidden;background:var(--line)}
+.library-item{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px;background:var(--panel)}
 .library-open{border:0;background:transparent;color:inherit;display:flex;flex-direction:column;align-items:flex-start;
-  gap:2px;padding:9px 10px;cursor:pointer;min-width:0;width:100%;text-align:left}
-.library-open:hover{background:#2e3034}
-.library-open b{font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
-.library-open small{font-size:9px;color:var(--muted);font-family:var(--mono)}
-.library-item .download-btn{margin-right:6px}
+  gap:2px;padding:10px 12px;cursor:pointer;min-width:0;width:100%;text-align:left}
+.library-open:hover{background:var(--panel-2)}
+.library-open b{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;max-width:100%}
+.library-open small{font-size:11px;color:var(--muted)}
+.library-item .download-btn{margin-right:8px}
 
 @media (max-width:520px){
-  .card{padding:14px}
+  .card{padding:16px}
   .drop-zone{min-height:220px}
 }

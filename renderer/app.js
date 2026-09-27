@@ -156,6 +156,30 @@ function toAudioBuffer(channels) {
   return buffer;
 }
 
+/** Encode a live AudioBuffer — the mix currently playing, muted stems and
+ * all — as a 16-bit stereo WAV, for saving whatever combination is audible. */
+function encodeWav(buffer) {
+  const left = buffer.getChannelData(0);
+  const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : left;
+  const frames = left.length;
+  const out = new ArrayBuffer(44 + frames * 4);
+  const view = new DataView(out);
+  const writeString = (offset, text) => {
+    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  writeString(0, 'RIFF'); view.setUint32(4, 36 + frames * 4, true); writeString(8, 'WAVE');
+  writeString(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 2, true);
+  view.setUint32(24, RATE, true); view.setUint32(28, RATE * 4, true);
+  view.setUint16(32, 4, true); view.setUint16(34, 16, true);
+  writeString(36, 'data'); view.setUint32(40, frames * 4, true);
+  const clamp = value => Math.max(-32768, Math.min(32767, Math.round(value * 32767)));
+  for (let i = 0; i < frames; i += 1) {
+    view.setInt16(44 + i * 4, clamp(left[i]), true);
+    view.setInt16(46 + i * 4, clamp(right[i]), true);
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ *
  * App state
  * ------------------------------------------------------------------ */
@@ -196,6 +220,8 @@ const progressBar = el('progress-bar');
 const cancelBtn = el('cancel');
 const songError = el('song-error');
 const mixerEl = el('mixer');
+const exportRow = el('export-row');
+const exportMixBtn = el('export-mix');
 const mixerActions = el('mixer-actions');
 const everyoneBtn = el('everyone');
 const downloadAllBtn = el('download-all');
@@ -390,6 +416,41 @@ async function downloadAll() {
   }
 }
 
+/**
+ * Save whatever's currently audible as one file — the mute/solo state, baked
+ * in. Muting Vocals and exporting makes an instrumental; soloing Bass and
+ * exporting isolates just the bass line.
+ */
+async function downloadMix() {
+  if (!player.buffer) return;
+  const on = STEM_ORDER.filter(stem => state.audible[stem]);
+  const off = STEM_ORDER.filter(stem => !state.audible[stem]);
+  const label = on.length === STEM_ORDER.length ? 'Mix'
+    : on.length === 1 ? `${STEM_LABELS[on[0]]} only`
+    : off.length === 1 ? `No ${STEM_LABELS[off[0]]}`
+    : 'Custom mix';
+  const suggested = `${state.fileName} - ${label}.wav`;
+  const bytes = encodeWav(player.buffer);
+  try {
+    if (bridge?.saveStem) {
+      await bridge.saveStem(bytes, suggested);
+    } else {
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = suggested;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+  } catch {
+    state.error = 'That mix could not be saved.';
+    renderStemsPanel();
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * The library: songs already separated, reopened without splitting again.
  * A song only ever gets an entry once separation succeeds, because that is
@@ -463,26 +524,35 @@ function renderMixer() {
   const ready = state.phase === 'ready';
   mixerEl.hidden = !ready;
   mixerActions.hidden = !ready;
+  exportRow.hidden = !ready;
   if (!ready) { mixerEl.innerHTML = ''; return; }
 
   const allOn = STEM_ORDER.every(stem => state.audible[stem]);
   everyoneBtn.disabled = allOn;
 
+  const on = STEM_ORDER.filter(stem => state.audible[stem]);
+  const off = STEM_ORDER.filter(stem => !state.audible[stem]);
   // Soloed, for the button's own highlight, when exactly one stem is audible.
-  const soloed = STEM_ORDER.filter(stem => state.audible[stem]).length === 1
-    ? STEM_ORDER.find(stem => state.audible[stem])
-    : null;
+  const soloed = on.length === 1 ? on[0] : null;
+
+  // What Export would actually produce, named the way someone asking for it
+  // would say it: "no Vocals", "Bass only", or the full mix.
+  exportMixBtn.textContent =
+    allOn ? 'Export the full mix'
+    : soloed ? `Export ${STEM_LABELS[soloed]} only`
+    : off.length === 1 ? `Export with no ${STEM_LABELS[off[0]]}`
+    : `Export this mix (${on.map(s => STEM_LABELS[s]).join(', ')})`;
 
   mixerEl.innerHTML = STEM_ORDER.map(stem => {
     const muted = !state.audible[stem];
     return `
       <div class="stem-row ${muted ? 'muted' : ''}" data-stem="${stem}">
-        <button class="mute-btn" data-action="toggle" aria-pressed="${muted}"
-          aria-label="${muted ? 'Unmute' : 'Mute'} ${STEM_LABELS[stem]}">${muted ? '&#128263;' : '&#128266;'}</button>
+        <button class="mute-btn" data-action="toggle" aria-pressed="${!muted}"
+          aria-label="${muted ? 'Unmute' : 'Mute'} ${STEM_LABELS[stem]}"></button>
         <span class="stem-name">${STEM_LABELS[stem]}</span>
         <button class="solo-btn ${stem === soloed ? 'active' : ''}" data-action="solo"
           aria-pressed="${stem === soloed}">Solo</button>
-        <button class="download-btn" data-action="download" aria-label="Download ${STEM_LABELS[stem]}" title="Download">&#8681;</button>
+        <button class="download-btn" data-action="download" aria-label="Download ${STEM_LABELS[stem]}" title="Download this stem alone">&#8681;</button>
       </div>`;
   }).join('');
 
@@ -559,6 +629,7 @@ separateBtn.addEventListener('click', () => void separate());
 cancelBtn.addEventListener('click', () => bridge?.stemCancel?.());
 everyoneBtn.addEventListener('click', everyone);
 downloadAllBtn.addEventListener('click', () => void downloadAll());
+exportMixBtn.addEventListener('click', () => void downloadMix());
 
 closeSongBtn.addEventListener('click', () => {
   player.stop();

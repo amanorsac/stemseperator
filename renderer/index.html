@@ -8,12 +8,12 @@
 </head>
 <body>
   <header class="titlebar">
-    <div class="brand"><span class="mark">▮▮▮▮</span><strong>Easy Stems</strong></div>
     <div class="window-controls" id="window-controls" hidden>
-      <button id="win-min" aria-label="Minimise">&#8211;</button>
-      <button id="win-max" aria-label="Maximise">&#9633;</button>
-      <button id="win-close" aria-label="Close">&#10005;</button>
+      <button id="win-close" class="dot dot-red" aria-label="Close"></button>
+      <button id="win-min" class="dot dot-yellow" aria-label="Minimise"></button>
+      <button id="win-max" class="dot dot-green" aria-label="Maximise"></button>
     </div>
+    <strong class="brand">Easy Stems</strong>
   </header>
 
   <main>
@@ -72,9 +72,16 @@
         <div id="song-error" class="banner error" hidden></div>
 
         <div id="mixer" class="mixer" hidden></div>
+        <div id="export-row" class="export-row" hidden>
+          <button id="export-mix" class="primary wide"></button>
+          <p class="hint">
+            Mute what you don't want — Vocals, say — and Export saves everything else as one file: an
+            instant instrumental. Solo one stem instead to export it alone.
+          </p>
+        </div>
         <div id="mixer-actions" class="mixer-actions" hidden>
           <button id="everyone" class="subtle">Bring everyone back</button>
-          <button id="download-all" class="subtle">Download all six</button>
+          <button id="download-all" class="subtle">Download all six separately</button>
         </div>
 
         <button id="import-another" class="subtle">Import another</button>

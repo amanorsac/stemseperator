@@ -18,6 +18,7 @@
   "build": {
     "appId": "studio.amanorsac.easystems",
     "productName": "Easy Stems",
+    "publish": null,
     "directories": {
       "output": "installer",
       "buildResources": "build"
