@@ -37,6 +37,22 @@ const MODEL_URL = `https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/m
 const MODEL_BYTES = 136 * 1024 * 1024;
 
 /**
+ * The second network: a "karaoke" model from Ultimate Vocal Remover, which
+ * takes a lead vocal out of whatever it is given. Run on the vocals stem
+ * alone, what it keeps is the backing vocals and what it removes is the lead.
+ * MIT licensed, like the rest.
+ */
+const KARAOKE_FILE = 'UVR_MDXNET_KARA_2.onnx';
+const KARAOKE_URL = `https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/${KARAOKE_FILE}`;
+const KARAOKE_BYTES = 53 * 1024 * 1024;
+/** How UVR runs this particular model; the numbers come from its own model registry. */
+const KARAOKE_SPEC = { nFft: 5120, dimF: 2048, dimT: 8, compensate: 1.065 };
+
+/** The two halves of the vocals stem, once split. */
+const VOCAL_PARTS = ['lead_vocals', 'backing_vocals'];
+const ALL_STEMS = [...STEMS, ...VOCAL_PARTS];
+
+/**
  * The cross-fade applied to each piece: up over the first quarter, flat, down
  * over the last. Overlapping pieces then sum to a constant.
  */
@@ -78,6 +94,18 @@ function encodeWav(left, right) {
   return buffer;
 }
 
+/** The reverse: one of our own WAVs back to floating-point channels. */
+function decodeWav(buffer) {
+  const frames = Math.floor((buffer.length - 44) / 4);
+  const left = new Float32Array(frames);
+  const right = new Float32Array(frames);
+  for (let i = 0; i < frames; i += 1) {
+    left[i] = buffer.readInt16LE(44 + i * 4) / 32768;
+    right[i] = buffer.readInt16LE(46 + i * 4) / 32768;
+  }
+  return { left, right };
+}
+
 /**
  * A fingerprint of a recording, for finding its stems again.
  *
@@ -113,32 +141,52 @@ class StemSeparator {
     return path.join(this.modelFolder, MODEL_FILE);
   }
 
+  get karaokePath() {
+    return path.join(this.modelFolder, KARAOKE_FILE);
+  }
+
   modelReady() {
     try { return fs.statSync(this.modelPath).size > 100 * 1024 * 1024; } catch { return false; }
+  }
+
+  karaokeReady() {
+    try { return fs.statSync(this.karaokePath).size > 40 * 1024 * 1024; } catch { return false; }
   }
 
   status() {
     return {
       modelReady: this.modelReady(),
       modelBytes: MODEL_BYTES,
+      karaokeReady: this.karaokeReady(),
+      karaokeBytes: KARAOKE_BYTES,
       busy: this.busy,
       provider: this.provider,
       stems: STEMS,
+      vocalParts: VOCAL_PARTS,
     };
   }
 
   /**
-   * Fetch the network, once.
+   * Fetch a network, once.
    *
-   * It is far too large to put in the installer for a feature not everyone
-   * will use, so it is downloaded the first time stems are asked for. Written
-   * to a temporary name and renamed at the end, so a download that is cut off
-   * never leaves behind a file that looks complete.
+   * They are far too large to put in the installer, so each is downloaded the
+   * first time it is needed. Written to a temporary name and renamed at the
+   * end, so a download that is cut off never leaves behind a file that looks
+   * complete.
    */
   downloadModel(onProgress) {
     if (this.modelReady()) return Promise.resolve(this.modelPath);
+    return this.fetchModel(MODEL_URL, this.modelPath, MODEL_BYTES, onProgress);
+  }
+
+  downloadKaraoke(onProgress) {
+    if (this.karaokeReady()) return Promise.resolve(this.karaokePath);
+    return this.fetchModel(KARAOKE_URL, this.karaokePath, KARAOKE_BYTES, onProgress);
+  }
+
+  fetchModel(startUrl, target, expectedBytes, onProgress) {
     fs.mkdirSync(this.modelFolder, { recursive: true });
-    const partial = `${this.modelPath}.part`;
+    const partial = `${target}.part`;
 
     const fetchTo = (url, redirects) => new Promise((resolve, reject) => {
       if (redirects > 6) { reject(new Error('Too many redirects while downloading the model.')); return; }
@@ -156,7 +204,7 @@ class StemSeparator {
           reject(new Error(`The model download failed (${statusCode}).`));
           return;
         }
-        const total = Number(headers['content-length']) || MODEL_BYTES;
+        const total = Number(headers['content-length']) || expectedBytes;
         let received = 0;
         const file = fs.createWriteStream(partial);
         response.on('data', chunk => {
@@ -170,9 +218,9 @@ class StemSeparator {
       }).on('error', reject);
     });
 
-    return fetchTo(MODEL_URL, 0).then(async () => {
-      await fsp.rename(partial, this.modelPath);
-      return this.modelPath;
+    return fetchTo(startUrl, 0).then(async () => {
+      await fsp.rename(partial, target);
+      return target;
     }).catch(async error => {
       await fsp.unlink(partial).catch(() => {});
       throw error;
@@ -202,18 +250,83 @@ class StemSeparator {
     return this.session;
   }
 
-  /** Where a recording's stems live, and whether they are all there. */
+  /**
+   * Where a recording's stems live, and which are there: `complete` once the
+   * six instruments are, `vocalsSplit` once the lead and backing are too.
+   */
   cacheFor(id) {
     const folder = path.join(this.stemFolder, id);
-    const files = Object.fromEntries(STEMS.map(stem => [stem, path.join(folder, `${stem}.wav`)]));
-    const complete = STEMS.every(stem => {
-      try { return fs.statSync(files[stem]).size > 44; } catch { return false; }
-    });
-    return { folder, files, complete };
+    const files = Object.fromEntries(ALL_STEMS.map(stem => [stem, path.join(folder, `${stem}.wav`)]));
+    const present = stem => { try { return fs.statSync(files[stem]).size > 44; } catch { return false; } };
+    return {
+      folder, files,
+      complete: STEMS.every(present),
+      vocalsSplit: VOCAL_PARTS.every(present),
+    };
   }
 
   cancel() {
     this.cancelled = true;
+  }
+
+  /**
+   * Split an already-separated song's vocals into lead and backing.
+   *
+   * The karaoke network keeps everything but the lead singer. Given the vocals
+   * stem alone, that is the backing vocals; the lead is what is left when they
+   * are taken away, so the two always add back up to the vocals exactly.
+   */
+  async splitVocals(id, onProgress) {
+    if (this.busy) throw new Error('A song is already being separated.');
+    const cache = this.cacheFor(id);
+    if (!cache.complete) throw new Error('Separate the song before splitting its vocals.');
+    if (cache.vocalsSplit) {
+      onProgress?.(1);
+      return { id, files: cache.files, cached: true };
+    }
+    this.busy = true;
+    this.cancelled = false;
+    try {
+      const { MdxModel } = require('./mdx.cjs');
+      this.karaoke ??= new MdxModel({ ...KARAOKE_SPEC, modelPath: this.karaokePath });
+      const { left, right } = decodeWav(await fsp.readFile(cache.files.vocals));
+      const [backingL, backingR] = await this.karaoke.separate(
+        left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled,
+      );
+      const leadL = new Float32Array(left.length);
+      const leadR = new Float32Array(right.length);
+      for (let i = 0; i < left.length; i += 1) {
+        leadL[i] = left[i] - backingL[i];
+        leadR[i] = right[i] - backingR[i];
+      }
+      await fsp.writeFile(cache.files.lead_vocals, encodeWav(leadL, leadR));
+      await fsp.writeFile(cache.files.backing_vocals, encodeWav(backingL, backingR));
+      onProgress?.(1);
+      return { id, files: cache.files, cached: false };
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Forget every separated song on disk. The models stay. */
+  async clearCache() {
+    await fsp.rm(this.stemFolder, { recursive: true, force: true });
+  }
+
+  /** How much the separated songs on disk add up to. */
+  async cacheSize() {
+    let total = 0;
+    const walk = async folder => {
+      let entries = [];
+      try { entries = await fsp.readdir(folder, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        const full = path.join(folder, entry.name);
+        if (entry.isDirectory()) await walk(full);
+        else total += (await fsp.stat(full)).size;
+      }
+    };
+    await walk(this.stemFolder);
+    return total;
   }
 
   /**
@@ -292,6 +405,6 @@ class StemSeparator {
 }
 
 module.exports = {
-  StemSeparator, STEMS, SAMPLE_RATE, SEGMENT, OVERLAP, STRIDE,
-  makeWindow, chunkCount, encodeWav, fingerprint,
+  StemSeparator, STEMS, VOCAL_PARTS, ALL_STEMS, SAMPLE_RATE, SEGMENT, OVERLAP, STRIDE,
+  makeWindow, chunkCount, encodeWav, decodeWav, fingerprint,
 };

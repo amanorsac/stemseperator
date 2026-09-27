@@ -10,7 +10,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, utilityProcess } = require('electron');
 const fs = require('fs/promises');
 const path = require('path');
-const { StemSeparator, STEMS } = require('./stems.cjs');
+const { StemSeparator, STEMS, ALL_STEMS } = require('./stems.cjs');
 
 let mainWindow;
 let stemWorker = null;
@@ -39,10 +39,10 @@ async function writeLibrary(list) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 720,
-    minWidth: 640,
-    minHeight: 560,
+    width: 1360,
+    height: 900,
+    minWidth: 1000,
+    minHeight: 680,
     frame: false,
     backgroundColor: '#07111b',
     title: 'Easy Stems',
@@ -130,10 +130,34 @@ app.whenReady().then(() => {
     return { id: result.id, cached: result.cached, stems: STEMS };
   });
   ipcMain.handle('stems:cancel', async () => { stemWorker?.postMessage({ type: 'cancel' }); });
+  ipcMain.handle('stems:download-karaoke', async () => {
+    await askStemWorker({ type: 'download-karaoke' });
+    return true;
+  });
+  ipcMain.handle('stems:split-vocals', async (_event, id) => {
+    if (!/^[0-9a-f]{20}$/.test(String(id))) throw new Error('No such song.');
+    if (stemJobs.size) throw new Error('A song is already being separated.');
+    const result = await askStemWorker({ type: 'split-vocals', id });
+    return { id: result.id, cached: result.cached };
+  });
+  // Which of a song's stems are on disk, so a reopened song knows whether
+  // its vocals were ever split.
+  ipcMain.handle('stems:cached', async (_event, id) => {
+    if (!/^[0-9a-f]{20}$/.test(String(id))) throw new Error('No such song.');
+    const cache = stemFiles.cacheFor(id);
+    return { complete: cache.complete, vocalsSplit: cache.vocalsSplit };
+  });
+  ipcMain.handle('stems:clear-cache', async () => {
+    if (stemJobs.size) throw new Error('Wait for the current separation to finish first.');
+    await askStemWorker({ type: 'clear-cache' });
+    await writeLibrary([]);
+    return true;
+  });
+  ipcMain.handle('stems:cache-size', async () => stemFiles.cacheSize());
   // The renderer names a song by its fingerprint and a stem by name; the path
   // is built here, so it can never be pointed at anything else on the disk.
   ipcMain.handle('stems:read', async (_event, id, stem) => {
-    if (!/^[0-9a-f]{20}$/.test(String(id)) || !STEMS.includes(stem)) throw new Error('No such stem.');
+    if (!/^[0-9a-f]{20}$/.test(String(id)) || !ALL_STEMS.includes(stem)) throw new Error('No such stem.');
     const bytes = await fs.readFile(stemFiles.cacheFor(id).files[stem]);
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   });
@@ -164,6 +188,40 @@ app.whenReady().then(() => {
     }
     shell.showItemInFolder(path.join(folder, files[0]?.name ?? ''));
     return folder;
+  });
+
+  ipcMain.handle('file:pick-folder', async (_event, title) => {
+    const chosen = await dialog.showOpenDialog(mainWindow, {
+      title: title || 'Choose a folder',
+      defaultPath: app.getPath('music'),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return chosen.canceled ? null : chosen.filePaths[0] || null;
+  });
+
+  /**
+   * Write files into a folder the person already chose, without asking again
+   * — what Export and batch runs do. A file name is only ever a name: anything
+   * that looks like a path is reduced to its last part.
+   */
+  ipcMain.handle('file:write-all', async (_event, folder, files) => {
+    const root = path.resolve(String(folder));
+    await fs.mkdir(root, { recursive: true });
+    const written = [];
+    for (const { name, bytes } of files) {
+      const safe = path.basename(String(name).replace(/[\\/:*?"<>|]/g, '_'));
+      const target = path.join(root, safe);
+      await fs.writeFile(target, Buffer.from(bytes));
+      written.push(target);
+    }
+    return written;
+  });
+
+  ipcMain.handle('file:reveal', async (_event, target) => { shell.showItemInFolder(String(target)); });
+  ipcMain.handle('app:music-folder', async () => app.getPath('music'));
+  ipcMain.handle('app:open-external', async (_event, url) => {
+    if (!/^https:\/\//.test(String(url))) return;
+    await shell.openExternal(String(url));
   });
 
   /* ---------------------------------------------------------------- *

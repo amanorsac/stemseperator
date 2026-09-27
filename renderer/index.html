@@ -13,83 +13,247 @@
       <button id="win-min" class="dot dot-yellow" aria-label="Minimise"></button>
       <button id="win-max" class="dot dot-green" aria-label="Maximise"></button>
     </div>
-    <strong class="brand">Easy Stems</strong>
+    <div class="titlebar-tab">Easy Stems</div>
   </header>
 
-  <main>
-    <div class="intro">
-      <h1>Split a song into its instruments</h1>
-      <p>Drums, bass, guitar, keys, vocals and everything else — separated on this computer. Nothing is uploaded anywhere.</p>
-    </div>
-
-    <div class="card">
-      <input id="file-input" type="file" accept="audio/*,video/*" hidden />
-
-      <div id="drop-zone" class="drop-zone">
-        <div class="wave-icon">〜〜〜</div>
-        <h2>Drop a song here</h2>
-        <p>MP3, WAV, M4A or similar.</p>
-        <button id="choose-file" class="primary">Choose a file</button>
-        <div id="intro-error" class="banner error" hidden></div>
-
-        <div id="library" class="library" hidden>
-          <small>Songs you've separated</small>
-          <div id="library-list" class="library-list"></div>
-        </div>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="logo">
+        <span class="logo-mark" data-icon="audio-lines"></span>
+        <b>Easy Stems</b>
+        <small>By Amanorsac Studio</small>
       </div>
+      <nav class="nav" id="nav">
+        <button data-page="split" class="active"><span data-icon="audio-lines"></span>Split Song</button>
+        <button data-page="batch"><span data-icon="layers"></span>Batch Processing</button>
+        <button data-page="export"><span data-icon="upload"></span>Export</button>
+        <button data-page="settings"><span data-icon="settings"></span>Settings</button>
+      </nav>
+      <div class="sidebar-foot">
+        <button data-page="help" class="nav-help"><span data-icon="circle-help"></span>Help &amp; Support</button>
+      </div>
+    </aside>
 
-      <div id="song-panel" class="song-panel" hidden>
-        <div class="song-status">
-          <b id="song-name"></b>
-          <small id="song-duration"></small>
+    <main class="content">
+      <!-- ============================ Split ============================ -->
+      <section class="page" id="page-split">
+        <header class="page-head">
+          <div>
+            <h1>Split a song <span class="accent">into its instruments</span></h1>
+            <p>Drums, bass, guitar, keys, lead and backing vocals and more — separated on this computer. Nothing is uploaded anywhere.</p>
+          </div>
+          <div class="head-actions">
+            <button class="icon-btn" id="head-settings" aria-label="Settings" data-icon="settings"></button>
+            <div class="studio-chip"><span data-icon="audio-lines"></span>Amanorsac Studio</div>
+          </div>
+        </header>
+
+        <input id="file-input" type="file" accept="audio/*,video/*" hidden />
+        <input id="batch-input" type="file" accept="audio/*,video/*" multiple hidden />
+
+        <div id="drop-card" class="card drop-card">
+          <div class="drop-zone" id="drop-zone">
+            <span class="drop-icon" data-icon="file-audio"></span>
+            <h2>Drop a song here</h2>
+            <p>MP3, WAV, M4A, FLAC or a video. It's split into its instruments the moment it lands.</p>
+            <button class="primary" id="choose-file"><span data-icon="folder-open"></span>Open a song</button>
+            <div id="intro-error" class="banner error" hidden></div>
+          </div>
+          <div id="library" class="library" hidden>
+            <div class="library-head"><b>Songs you've separated</b><small>Open instantly — no separating again</small></div>
+            <div id="library-list" class="library-list"></div>
+          </div>
         </div>
 
-        <div class="transport">
-          <button id="play-pause" class="transport-btn play" aria-label="Play">&#9654;</button>
-          <button id="stop" class="transport-btn" aria-label="Stop">&#9632;</button>
-          <span id="time" class="time">0:00 / 0:00</span>
-          <input id="seek" class="seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Seek" />
-          <label class="volume">
-            &#128266;
-            <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume" />
-          </label>
+        <div id="song-card" class="card song-card" hidden>
+          <div class="song-top">
+            <div class="cover" id="cover"><span data-icon="music"></span></div>
+            <div class="song-main">
+              <div class="song-title-row">
+                <div>
+                  <b id="song-name"></b>
+                  <small id="song-time-top">0:00 / 0:00</small>
+                </div>
+                <button class="ghost" id="open-song"><span data-icon="folder-open"></span>Open Song</button>
+              </div>
+              <div class="wave-wrap" id="song-wave-wrap">
+                <canvas id="song-wave"></canvas>
+                <div class="playhead" id="playhead"></div>
+              </div>
+            </div>
+          </div>
+          <div class="transport">
+            <button class="transport-btn" id="skip-back" aria-label="Back 10 seconds" data-icon="skip-back"></button>
+            <button class="transport-btn play" id="play-pause" aria-label="Play"><span data-icon="play"></span></button>
+            <button class="transport-btn" id="skip-fwd" aria-label="Forward 10 seconds" data-icon="skip-forward"></button>
+            <button class="transport-btn" id="stop" aria-label="Stop" data-icon="square"></button>
+            <span class="time" id="time">0:00 / 0:00</span>
+            <input id="seek" class="seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Seek" />
+            <span class="vol-icon" data-icon="volume-2"></span>
+            <input id="volume" class="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume" />
+            <span class="vol-label" id="vol-label">80%</span>
+          </div>
         </div>
 
-        <div id="separate-row">
-          <p class="hint">
-            Split this into drums, bass, guitar, keys and vocals, plus everything else (synths, pads, extra
-            parts) as Aux. Mute the part you want to play, or solo it to hear it alone. Each stem saves as its own file.
-          </p>
-          <button id="separate" class="primary wide">Separate the instruments</button>
+        <div id="work-card" class="card work-card" hidden>
+          <div class="work-row">
+            <span class="spinner" id="work-spinner"></span>
+            <div class="work-text">
+              <b id="work-label">Separating…</b>
+              <small id="work-sub"></small>
+            </div>
+            <span class="work-pct" id="work-pct">0%</span>
+            <button class="ghost small" id="cancel">Cancel</button>
+          </div>
+          <div class="bar"><i id="work-bar"></i></div>
         </div>
-
-        <div id="progress" class="progress" hidden>
-          <span id="progress-label"></span>
-          <i><em id="progress-bar"></em></i>
-          <button id="cancel" class="subtle">Cancel</button>
-        </div>
-
         <div id="song-error" class="banner error" hidden></div>
 
-        <div id="mixer" class="mixer" hidden></div>
-        <div id="export-row" class="export-row" hidden>
-          <button id="export-mix" class="primary wide"></button>
-          <p class="hint">
-            Mute what you don't want — Vocals, say — and Export saves everything else as one file: an
-            instant instrumental. Solo one stem instead to export it alone.
-          </p>
+        <section id="stems-section" hidden>
+          <div class="section-head">
+            <h2>Separated Stems</h2>
+            <button class="ghost small" id="select-all"><span data-icon="check"></span>Select All</button>
+          </div>
+          <div class="card stems-card" id="stems"></div>
+        </section>
+
+        <section id="export-panel" class="card export-panel" hidden>
+          <div class="export-copy">
+            <b>Export Mix</b>
+            <small>Export individual stems or the full mix.</small>
+            <div class="segmented" id="export-mode">
+              <button data-mode="stems" class="active">Selected stems</button>
+              <button data-mode="mix">One mix</button>
+            </div>
+          </div>
+          <label class="field"><span>Format</span>
+            <select id="export-format"><option value="wav">WAV</option></select>
+          </label>
+          <label class="field"><span>Sample Rate</span>
+            <select id="export-rate"><option value="44100">44.1 kHz</option><option value="48000">48 kHz</option></select>
+          </label>
+          <label class="field"><span>Bit Depth</span>
+            <select id="export-bits"><option value="16">16 bit</option><option value="24">24 bit</option></select>
+          </label>
+          <div class="field"><span>Output Folder</span>
+            <button class="folder-btn" id="export-folder"><span data-icon="folder"></span><em id="export-folder-label">Same as source</em><span data-icon="chevron-down"></span></button>
+          </div>
+          <button class="primary big" id="export-now"><span data-icon="upload"></span><span id="export-now-label">Export Stems</span></button>
+        </section>
+      </section>
+
+      <!-- ============================ Batch ============================ -->
+      <section class="page" id="page-batch" hidden>
+        <header class="page-head">
+          <div>
+            <h1>Batch <span class="accent">Processing</span></h1>
+            <p>Queue up a whole folder of songs. Each is separated in turn and its stems saved straight to your output folder.</p>
+          </div>
+        </header>
+        <div class="card batch-card">
+          <div class="batch-toolbar">
+            <button class="primary" id="batch-add"><span data-icon="plus"></span>Add songs</button>
+            <button class="ghost" id="batch-start"><span data-icon="play"></span>Start batch</button>
+            <button class="ghost" id="batch-clear"><span data-icon="trash-2"></span>Clear finished</button>
+            <span class="batch-folder">Saving to <em id="batch-folder-label">Same folder as each song</em></span>
+          </div>
+          <div class="batch-drop" id="batch-drop">
+            <div id="batch-empty" class="batch-empty">
+              <span data-icon="layers"></span>
+              <p>Drop songs here, or click Add songs. Then Start batch and go make a coffee.</p>
+            </div>
+            <div id="batch-list" class="batch-list"></div>
+          </div>
         </div>
-        <div id="mixer-actions" class="mixer-actions" hidden>
-          <button id="everyone" class="subtle">Bring everyone back</button>
-          <button id="download-all" class="subtle">Download all six separately</button>
+      </section>
+
+      <!-- ============================ Settings ============================ -->
+      <section class="page" id="page-settings" hidden>
+        <header class="page-head">
+          <div>
+            <h1>Settings</h1>
+            <p>Where stems go, how they're saved, and the models doing the work.</p>
+          </div>
+        </header>
+
+        <div class="card settings-card">
+          <h3>Output</h3>
+          <div class="setting">
+            <div><b>Output folder</b><small>Where exported stems and batch results are saved.</small></div>
+            <div class="setting-ctl">
+              <button class="folder-btn" id="settings-folder"><span data-icon="folder"></span><em id="settings-folder-label">Same as source</em></button>
+              <button class="ghost small" id="settings-folder-reset">Use song's folder</button>
+            </div>
+          </div>
+          <div class="setting">
+            <div><b>Sample rate</b><small>44.1 kHz matches what the models produce; 48 kHz for video work.</small></div>
+            <select id="settings-rate"><option value="44100">44.1 kHz</option><option value="48000">48 kHz</option></select>
+          </div>
+          <div class="setting">
+            <div><b>Bit depth</b><small>16-bit is CD quality; 24-bit leaves headroom for mixing.</small></div>
+            <select id="settings-bits"><option value="16">16 bit</option><option value="24">24 bit</option></select>
+          </div>
         </div>
 
-        <button id="import-another" class="subtle">Import another</button>
-        <button id="close-song" class="subtle">Close this song</button>
-      </div>
-    </div>
-  </main>
+        <div class="card settings-card">
+          <h3>Separation</h3>
+          <div class="setting">
+            <div><b>Split vocals into lead and backing</b><small>Runs a second, karaoke-trained model over the vocals. Adds a few minutes per song.</small></div>
+            <button class="switch on" id="settings-split" role="switch" aria-checked="true"></button>
+          </div>
+        </div>
 
+        <div class="card settings-card">
+          <h3>Models</h3>
+          <div class="setting">
+            <div><b>HT-Demucs (6 stems)</b><small>Meta's separation network. About 136 MB, downloaded once.</small></div>
+            <div class="setting-ctl"><span class="status" id="model-demucs-status">—</span><button class="ghost small" id="model-demucs-get">Download</button></div>
+          </div>
+          <div class="setting">
+            <div><b>UVR MDX-Net Karaoke 2</b><small>The lead-vocal model from Ultimate Vocal Remover. About 53 MB.</small></div>
+            <div class="setting-ctl"><span class="status" id="model-kara-status">—</span><button class="ghost small" id="model-kara-get">Download</button></div>
+          </div>
+          <div class="bar thin" id="model-bar-wrap" hidden><i id="model-bar"></i></div>
+        </div>
+
+        <div class="card settings-card">
+          <h3>Storage</h3>
+          <div class="setting">
+            <div><b>Separated songs on disk</b><small id="cache-size">Every song you've split is kept so it opens instantly.</small></div>
+            <button class="ghost small danger" id="cache-clear"><span data-icon="trash-2"></span>Clear all</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ Help ============================ -->
+      <section class="page" id="page-help" hidden>
+        <header class="page-head">
+          <div>
+            <h1>Help &amp; <span class="accent">Support</span></h1>
+            <p>How it works, what to expect, and what to do when something's off.</p>
+          </div>
+        </header>
+        <div class="card help-card">
+          <h3>How it works</h3>
+          <p>Open a song and it's fed through HT-Demucs, Meta's separation network, which pulls out drums, bass, guitar, keys, vocals and everything else. The vocals then go through a second model, trained for karaoke, which lifts the lead singer off the backing vocals. Everything runs on your own computer; no audio ever leaves it.</p>
+          <h3>What to expect</h3>
+          <p>The first run downloads the models (about 190 MB in total). Separating takes a few minutes per song on the processor — a progress bar shows where it's at, and the window stays usable. A song you've split before opens instantly from the library.</p>
+          <h3>Getting just one part, or everything but one</h3>
+          <p>Every stem has a switch. Turn off the ones you don't want and export as <b>one mix</b> to get, say, an instrumental with no lead vocal. Solo a stem and export to get it alone. Or export the <b>selected stems</b> as separate files for your DAW.</p>
+          <h3>When the split isn't clean</h3>
+          <p>Separation is a best guess, not a master recording. Heavily layered vocals, distorted guitars and dense synths can bleed between stems — that's the state of the art, not a fault. Pads, organs and synths often land in Aux rather than Keys.</p>
+          <h3>Credits</h3>
+          <p>HT-Demucs by Meta AI Research (MIT). UVR MDX-Net Karaoke model from the Ultimate Vocal Remover project (MIT). Icons by Lucide (ISC). Built by Amanorsac Studio.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <div id="menu" class="menu" hidden></div>
+
+  <script src="icons.js"></script>
+  <script src="player.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,518 +1,520 @@
 /**
- * Easy Stems' whole interface: one page, no build step, no framework.
+ * Easy Stems' interface: one page, no build step, no framework.
  *
- * The heavy lifting — running the network — happens in the main process,
+ * The heavy lifting — running the networks — happens in the main process,
  * reached through `window.easyStems` (see electron/preload.cjs). This file
- * only ever decodes audio, mixes stems back together for playback, and
- * drives the DOM.
+ * decodes audio, keeps the app's state, and drives the DOM.
  */
 
-const STEM_ORDER = ['drums', 'bass', 'guitar', 'piano', 'vocals', 'other'];
-const STEM_LABELS = { drums: 'Drums', bass: 'Bass', guitar: 'Guitar', piano: 'Keys', vocals: 'Vocals', other: 'Aux' };
-const RATE = 44100;
-
 const bridge = window.easyStems;
+const el = id => document.getElementById(id);
 
 /* ------------------------------------------------------------------ *
- * A small player: one AudioBuffer at a time, played, paused and sought
- * without ever losing track of where it was.
+ * Stems
  * ------------------------------------------------------------------ */
-class Player {
-  constructor() {
-    this.ctx = null;
-    this.gain = null;
-    this.source = null;
-    this.buffer = null;
-    this.duration = 0;
-    this.playing = false;
-    this.startedAtCtxTime = 0;
-    this.startOffset = 0;
-    this.listeners = new Set();
-  }
 
-  ensure() {
-    this.ctx ??= new (window.AudioContext || window.webkitAudioContext)();
-    if (!this.gain) {
-      this.gain = this.ctx.createGain();
-      this.gain.gain.value = 0.8;
-      this.gain.connect(this.ctx.destination);
-    }
-    return this.ctx;
-  }
+const STEM_DEFS = {
+  drums: { label: 'Drums', color: 'var(--drums)', icon: 'drum' },
+  bass: { label: 'Bass', color: 'var(--bass)', icon: 'guitar' },
+  guitar: { label: 'Guitar', color: 'var(--guitar)', icon: 'guitar' },
+  piano: { label: 'Keys', color: 'var(--keys)', icon: 'piano' },
+  vocals: { label: 'Vocals', color: 'var(--lead)', icon: 'mic' },
+  lead_vocals: { label: 'Lead Vocals', color: 'var(--lead)', icon: 'mic-vocal' },
+  backing_vocals: { label: 'Backing Vocals', color: 'var(--backing)', icon: 'users' },
+  other: { label: 'Aux / Other', file: 'Aux', color: 'var(--aux)', icon: 'ellipsis' },
+};
+const ORDER_SPLIT = ['drums', 'bass', 'guitar', 'piano', 'lead_vocals', 'backing_vocals', 'other'];
+const ORDER_PLAIN = ['drums', 'bass', 'guitar', 'piano', 'vocals', 'other'];
+const WAVE_BUCKETS = 240;
 
-  subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
-  notify() { this.listeners.forEach(fn => fn()); }
+/* ------------------------------------------------------------------ *
+ * Settings, kept in the page's own storage
+ * ------------------------------------------------------------------ */
 
-  get position() {
-    if (!this.playing || !this.ctx) return this.startOffset;
-    return Math.min(this.duration, this.startOffset + (this.ctx.currentTime - this.startedAtCtxTime));
-  }
-
-  /** Load a fresh buffer, replacing whatever was playing. */
-  load(buffer) {
-    this.stopNode();
-    this.buffer = buffer;
-    this.duration = buffer.duration;
-    this.playing = false;
-    this.startOffset = 0;
-    this.notify();
-  }
-
-  /** Swap in a new mix of the same song, keeping the playhead and play state. */
-  loadKeepingPlace(buffer) {
-    const at = this.position;
-    const wasPlaying = this.playing;
-    this.stopNode();
-    this.buffer = buffer;
-    this.duration = buffer.duration;
-    this.startOffset = Math.min(at, this.duration);
-    this.playing = false;
-    if (wasPlaying) this.play();
-    else this.notify();
-  }
-
-  play() {
-    if (!this.buffer || this.playing) return;
-    this.ensure();
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
-    const node = this.ctx.createBufferSource();
-    node.buffer = this.buffer;
-    node.connect(this.gain);
-    const offset = Math.min(this.startOffset, this.duration);
-    node.onended = () => {
-      if (this.source !== node) return;
-      this.playing = false;
-      this.startOffset = this.duration;
-      this.notify();
-    };
-    node.start(0, offset);
-    this.source = node;
-    this.startedAtCtxTime = this.ctx.currentTime;
-    this.playing = true;
-    this.notify();
-  }
-
-  pause() {
-    if (!this.playing) return;
-    this.startOffset = this.position;
-    this.stopNode();
-    this.playing = false;
-    this.notify();
-  }
-
-  stop() {
-    this.stopNode();
-    this.playing = false;
-    this.startOffset = 0;
-    this.notify();
-  }
-
-  seek(seconds) {
-    const clamped = Math.max(0, Math.min(this.duration, seconds));
-    const wasPlaying = this.playing;
-    this.stopNode();
-    this.startOffset = clamped;
-    if (wasPlaying) this.play();
-    else this.notify();
-  }
-
-  setVolume(value) {
-    this.ensure();
-    this.gain.gain.value = Math.max(0, Math.min(1, value));
-  }
-
-  stopNode() {
-    if (!this.source) return;
-    try { this.source.onended = null; this.source.stop(); } catch { /* already stopped */ }
-    try { this.source.disconnect(); } catch { /* already gone */ }
-    this.source = null;
-  }
+const DEFAULT_SETTINGS = { sampleRate: 44100, bitDepth: 16, outputFolder: '', splitVocals: true, exportMode: 'stems' };
+const settings = { ...DEFAULT_SETTINGS };
+try { Object.assign(settings, JSON.parse(localStorage.getItem('easy-stems.settings') || '{}')); } catch { /* defaults */ }
+function saveSettings() {
+  try { localStorage.setItem('easy-stems.settings', JSON.stringify(settings)); } catch { /* nothing to do */ }
 }
+
+/* ------------------------------------------------------------------ *
+ * State
+ * ------------------------------------------------------------------ */
+
+const state = {
+  page: 'split',
+  /** The open song, or null. */
+  song: null,
+  /** [{ key, label, color, icon, on, gain (dB), samples, peaks }] */
+  stems: [],
+  /** A stem heard alone without touching the switches, or null. */
+  audition: null,
+  /** { label, sub, progress, cancellable } while something long runs. */
+  working: null,
+  error: '',
+  library: [],
+  batch: [],
+  batchRunning: false,
+  models: { modelReady: false, karaokeReady: false },
+};
 
 const player = new Player();
 
 /* ------------------------------------------------------------------ *
- * Mixing separated stems back into something playable
+ * Small helpers
  * ------------------------------------------------------------------ */
 
-/** Sum 16-bit interleaved-stereo stems into floating stereo channels. */
-function mixStems(stems) {
-  const frames = stems.length ? Math.floor(stems[0].length / 2) : 0;
-  const left = new Float32Array(frames);
-  const right = new Float32Array(frames);
-  stems.forEach(samples => {
-    for (let i = 0; i < frames; i += 1) {
-      left[i] += samples[i * 2] / 32768;
-      right[i] += samples[i * 2 + 1] / 32768;
-    }
+function hydrateIcons(root = document) {
+  root.querySelectorAll('[data-icon]').forEach(node => {
+    if (node.dataset.hydrated) return;
+    node.innerHTML = icon(node.dataset.icon, 20);
+    node.dataset.hydrated = '1';
   });
-  return [left, right];
 }
 
-function toAudioBuffer(channels) {
-  const ctx = player.ensure();
-  const buffer = ctx.createBuffer(2, Math.max(1, channels[0].length), RATE);
-  channels.forEach((data, index) => buffer.copyToChannel(data, index));
-  return buffer;
+let toastTimer = 0;
+function toast(message, isError = false) {
+  const node = el('toast');
+  node.textContent = message;
+  node.classList.toggle('error', isError);
+  node.hidden = false;
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { node.hidden = true; }, isError ? 7000 : 4000);
 }
 
-/** Encode a live AudioBuffer — the mix currently playing, muted stems and
- * all — as a 16-bit stereo WAV, for saving whatever combination is audible. */
-function encodeWav(buffer) {
-  const left = buffer.getChannelData(0);
-  const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : left;
-  const frames = left.length;
-  const out = new ArrayBuffer(44 + frames * 4);
-  const view = new DataView(out);
-  const writeString = (offset, text) => {
-    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
-  };
-  writeString(0, 'RIFF'); view.setUint32(4, 36 + frames * 4, true); writeString(8, 'WAVE');
-  writeString(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 2, true);
-  view.setUint32(24, RATE, true); view.setUint32(28, RATE * 4, true);
-  view.setUint16(32, 4, true); view.setUint16(34, 16, true);
-  writeString(36, 'data'); view.setUint32(40, frames * 4, true);
-  const clamp = value => Math.max(-32768, Math.min(32767, Math.round(value * 32767)));
-  for (let i = 0; i < frames; i += 1) {
-    view.setInt16(44 + i * 4, clamp(left[i]), true);
-    view.setInt16(46 + i * 4, clamp(right[i]), true);
+const cleanError = error => (error && error.message ? error.message : String(error))
+  .replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+const baseName = name => name.replace(/\.[^.]+$/, '');
+const folderOf = filePath => filePath.replace(/[\\/][^\\/]*$/, '');
+
+function setWorking(next) {
+  state.working = next;
+  renderWork();
+}
+
+/* ------------------------------------------------------------------ *
+ * Pages
+ * ------------------------------------------------------------------ */
+
+function showPage(name) {
+  if (name === 'export') {
+    // Export lives on the song's page; the nav item just takes you to it.
+    showPage('split');
+    if (state.song && state.stems.length) {
+      el('export-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      toast('Open and separate a song first, then Export is at the bottom of its page.');
+    }
+    return;
   }
-  return out;
+  state.page = name;
+  document.querySelectorAll('.page').forEach(page => { page.hidden = page.id !== `page-${name}`; });
+  document.querySelectorAll('#nav button').forEach(button => button.classList.toggle('active', button.dataset.page === name));
+  if (name === 'settings') void renderSettings();
 }
 
 /* ------------------------------------------------------------------ *
- * App state
- * ------------------------------------------------------------------ */
-
-const state = {
-  fileName: '',
-  songId: '',
-  phase: 'none', // none | downloading | separating | loading | ready
-  progress: 0,
-  error: '',
-  audible: Object.fromEntries(STEM_ORDER.map(stem => [stem, true])),
-};
-/** stem name -> Int16Array of interleaved stereo samples */
-const stemData = new Map();
-
-/* ------------------------------------------------------------------ *
- * DOM
- * ------------------------------------------------------------------ */
-
-const el = id => document.getElementById(id);
-const fileInput = el('file-input');
-const dropZone = el('drop-zone');
-const chooseFileBtn = el('choose-file');
-const introError = el('intro-error');
-const songPanel = el('song-panel');
-const songName = el('song-name');
-const songDuration = el('song-duration');
-const playPauseBtn = el('play-pause');
-const stopBtn = el('stop');
-const timeEl = el('time');
-const seekEl = el('seek');
-const volumeEl = el('volume');
-const separateRow = el('separate-row');
-const separateBtn = el('separate');
-const progressEl = el('progress');
-const progressLabel = el('progress-label');
-const progressBar = el('progress-bar');
-const cancelBtn = el('cancel');
-const songError = el('song-error');
-const mixerEl = el('mixer');
-const exportRow = el('export-row');
-const exportMixBtn = el('export-mix');
-const mixerActions = el('mixer-actions');
-const everyoneBtn = el('everyone');
-const downloadAllBtn = el('download-all');
-const importAnotherBtn = el('import-another');
-const closeSongBtn = el('close-song');
-const libraryEl = el('library');
-const libraryListEl = el('library-list');
-
-const formatTime = seconds => {
-  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
-  const whole = Math.floor(seconds);
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
-};
-
-function showError(target, message) {
-  target.textContent = message;
-  target.hidden = !message;
-}
-
-/* ------------------------------------------------------------------ *
- * Opening a file
+ * Opening a song
  * ------------------------------------------------------------------ */
 
 async function openFile(file) {
-  showError(introError, '');
-  showError(songError, '');
-  stemData.clear();
-  state.songId = '';
-  state.phase = 'none';
-  state.progress = 0;
-  state.audible = Object.fromEntries(STEM_ORDER.map(stem => [stem, true]));
-
+  if (state.working) { toast('Wait for the current song to finish first.'); return; }
+  closeSong(false);
+  state.error = '';
+  const name = baseName(file.name);
   try {
     const bytes = await file.arrayBuffer();
-    const ctx = player.ensure();
-    const decoded = await ctx.decodeAudioData(bytes);
-    state.fileName = file.name.replace(/\.[^.]+$/, '');
+    // Decoding takes the buffer away, so the tag is read from a copy first.
+    const cover = coverFromId3(bytes.slice(0, Math.min(bytes.byteLength, 8 * 1024 * 1024)));
+    const decoded = await player.ensure().decodeAudioData(bytes);
+    state.song = {
+      name,
+      path: bridge?.pathOf ? bridge.pathOf(file) : '',
+      duration: decoded.duration,
+      coverUrl: cover ? URL.createObjectURL(cover) : '',
+      peaks: peaksOfChannel(decoded.getChannelData(0), 800),
+      songId: '',
+      split: false,
+      buffer: decoded,
+    };
     player.load(decoded);
-    songName.textContent = state.fileName;
-    songDuration.textContent = formatTime(decoded.duration);
-    dropZone.hidden = true;
-    songPanel.hidden = false;
-    renderStemsPanel();
-  } catch {
-    showError(introError, 'That file could not be read. Try an MP3, WAV or M4A.');
+    renderSong();
+    await separateCurrent();
+  } catch (error) {
+    state.error = cleanError(error) || 'That file could not be read. Try an MP3, WAV, M4A or FLAC.';
+    if (!state.song) el('intro-error').textContent = state.error;
+    el('intro-error').hidden = Boolean(state.song) || !state.error;
+    renderError();
   }
+}
+
+function closeSong(refresh = true) {
+  player.stop();
+  player.buffer = null;
+  player.duration = 0;
+  if (state.song?.coverUrl) URL.revokeObjectURL(state.song.coverUrl);
+  state.song = null;
+  state.stems = [];
+  state.audition = null;
+  state.error = '';
+  renderSong();
+  renderStems();
+  if (refresh) void refreshLibrary();
+}
+
+/** The network was trained on 44.1 kHz stereo and hears nothing else well. */
+async function prepare44k(buffer) {
+  const rendered = await resample(buffer, RATE);
+  return [rendered.getChannelData(0).slice(), rendered.getChannelData(1).slice()];
 }
 
 /* ------------------------------------------------------------------ *
  * Separation
  * ------------------------------------------------------------------ */
 
-async function separate() {
-  if (!bridge?.stemSeparate) {
-    state.error = 'Separating instruments needs the installed desktop app.';
-    renderStemsPanel();
-    return;
-  }
-  if (state.phase !== 'none' || !player.buffer) return;
-
-  state.error = '';
-  state.phase = 'separating';
-  state.progress = 0;
-  renderStemsPanel();
-
-  try {
-    const status = await bridge.stemStatus();
-    if (!status.modelReady) {
-      state.phase = 'downloading';
-      renderStemsPanel();
-      await bridge.stemDownload();
-    }
-    state.phase = 'separating';
-    state.progress = 0;
-    renderStemsPanel();
-
-    // The network was trained on 44.1 kHz stereo and hears nothing else well.
-    const source = player.buffer;
-    const length = Math.ceil(source.duration * RATE);
-    const offline = new OfflineAudioContext(2, length, RATE);
-    const node = offline.createBufferSource();
-    node.buffer = source;
-    node.connect(offline.destination);
-    node.start();
-    const prepared = await offline.startRendering();
-    const left = prepared.getChannelData(0).slice();
-    const right = prepared.getChannelData(1).slice();
-
-    const result = await bridge.stemSeparate(left.buffer, right.buffer);
-    state.songId = result.id;
-
-    state.phase = 'loading';
-    state.progress = 0;
-    renderStemsPanel();
-    for (let i = 0; i < STEM_ORDER.length; i += 1) {
-      const stemBytes = await bridge.stemRead(result.id, STEM_ORDER[i]);
-      // Past the 44-byte header, a WAV of this kind is nothing but samples.
-      stemData.set(STEM_ORDER[i], new Int16Array(stemBytes, 44, Math.floor((stemBytes.byteLength - 44) / 2)));
-      state.progress = (i + 1) / STEM_ORDER.length;
-      renderStemsPanel();
-    }
-    state.phase = 'ready';
-    applyAudible(state.audible);
-    renderStemsPanel();
-    void bridge.librarySave?.({ id: state.songId, name: state.fileName, duration: player.duration })
-      .then(() => refreshLibrary());
-  } catch (error) {
-    stemData.clear();
-    state.phase = 'none';
-    state.progress = 0;
-    state.error = (error && error.message) || 'Separation failed.';
-    renderStemsPanel();
-  }
-}
-
+/** Live progress from the engine, routed to whatever's showing it. */
+let progressSink = null;
 bridge?.onStemProgress?.(({ stage, fraction }) => {
-  state.phase = stage === 'download' ? 'downloading' : 'separating';
-  state.progress = fraction;
-  renderStemsPanel();
+  const labels = {
+    download: ['Downloading the separation model…', 'About 136 MB, once only.'],
+    'download-karaoke': ['Downloading the vocal model…', 'About 53 MB, once only.'],
+    separate: ['Separating the instruments…', 'Drums, bass, guitar, keys, vocals and the rest.'],
+    split: ['Splitting the vocals…', 'Lifting the lead singer off the backing vocals.'],
+  };
+  const [label, sub] = labels[stage] || ['Working…', ''];
+  progressSink?.({ stage, fraction, label, sub });
 });
 
-/* ------------------------------------------------------------------ *
- * The mixer: mute, solo, download
- * ------------------------------------------------------------------ */
-
-function applyAudible(audible) {
-  state.audible = audible;
-  const on = STEM_ORDER.filter(stem => audible[stem]);
-  const parts = on.map(stem => stemData.get(stem)).filter(Boolean);
-  if (!parts.length) return;
-  player.loadKeepingPlace(toAudioBuffer(mixStems(parts)));
-}
-
-function toggleStem(stem) {
-  applyAudible({ ...state.audible, [stem]: !state.audible[stem] });
-  renderMixer();
-}
-
-function soloStem(stem) {
-  const audible = state.audible;
-  const alone = STEM_ORDER.every(name => audible[name] === (name === stem));
-  const next = Object.fromEntries(STEM_ORDER.map(name => [name, alone || name === stem]));
-  applyAudible(next);
-  renderMixer();
-}
-
-function everyone() {
-  applyAudible(Object.fromEntries(STEM_ORDER.map(stem => [stem, true])));
-  renderMixer();
-}
-
-async function downloadStem(stem) {
-  if (!bridge?.stemRead || !state.songId) return;
-  try {
-    const bytes = await bridge.stemRead(state.songId, stem);
-    const suggested = `${state.fileName} - ${STEM_LABELS[stem]}.wav`;
-    if (bridge.saveStem) {
-      await bridge.saveStem(bytes, suggested);
-    } else {
-      const blob = new Blob([bytes], { type: 'audio/wav' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = suggested;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-    }
-  } catch {
-    state.error = 'That stem could not be saved.';
-    renderStemsPanel();
-  }
-}
-
-/** Save every stem in one pass — one folder picked once, not six dialogs. */
-async function downloadAll() {
-  if (!bridge?.stemRead || !state.songId) return;
-  try {
-    if (bridge.saveAllStems) {
-      const files = await Promise.all(STEM_ORDER.map(async stem => ({
-        name: `${state.fileName} - ${STEM_LABELS[stem]}.wav`,
-        bytes: await bridge.stemRead(state.songId, stem),
-      })));
-      await bridge.saveAllStems(files);
-    } else {
-      for (const stem of STEM_ORDER) await downloadStem(stem);
-    }
-  } catch {
-    state.error = 'The stems could not be saved.';
-    renderStemsPanel();
-  }
+/** Fetch whichever networks a step needs and doesn't have yet. */
+async function ensureModels({ demucs = false, karaoke = false }) {
+  if (!bridge?.stemStatus) throw new Error('Separating instruments needs the installed desktop app.');
+  const status = await bridge.stemStatus();
+  state.models = status;
+  if (demucs && !status.modelReady) await bridge.stemDownload();
+  if (karaoke && !status.karaokeReady) await bridge.stemDownloadKaraoke();
+  state.models = await bridge.stemStatus();
 }
 
 /**
- * Save whatever's currently audible as one file — the mute/solo state, baked
- * in. Muting Vocals and exporting makes an instrumental; soloing Bass and
- * exporting isolates just the bass line.
+ * Separate a decoded song, splitting its vocals when asked to. Resolves with
+ * the song's fingerprint and whether the split happened.
  */
-async function downloadMix() {
-  if (!player.buffer) return;
-  const on = STEM_ORDER.filter(stem => state.audible[stem]);
-  const off = STEM_ORDER.filter(stem => !state.audible[stem]);
-  const label = on.length === STEM_ORDER.length ? 'Mix'
-    : on.length === 1 ? `${STEM_LABELS[on[0]]} only`
-    : off.length === 1 ? `No ${STEM_LABELS[off[0]]}`
-    : 'Custom mix';
-  const suggested = `${state.fileName} - ${label}.wav`;
-  const bytes = encodeWav(player.buffer);
+async function separateBuffer(buffer, onProgress) {
+  progressSink = onProgress;
   try {
-    if (bridge?.saveStem) {
-      await bridge.saveStem(bytes, suggested);
-    } else {
-      const blob = new Blob([bytes], { type: 'audio/wav' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = suggested;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    onProgress({ stage: 'prepare', fraction: 0, label: 'Getting ready…', sub: 'Checking the models are here.' });
+    await ensureModels({ demucs: true, karaoke: settings.splitVocals });
+    const [left, right] = await prepare44k(buffer);
+    onProgress({ stage: 'separate', fraction: 0, label: 'Separating the instruments…', sub: 'The first piece takes half a minute to warm up.' });
+    const result = await bridge.stemSeparate(left.buffer, right.buffer);
+    let split = false;
+    if (settings.splitVocals) {
+      try {
+        onProgress({ stage: 'split', fraction: 0, label: 'Splitting the vocals…', sub: 'Lifting the lead singer off the backing vocals.' });
+        await bridge.stemSplitVocals(result.id);
+        split = true;
+      } catch (error) {
+        if (/cancel/i.test(cleanError(error))) throw error;
+        toast(`The vocals couldn't be split (${cleanError(error)}). Showing them as one stem.`, true);
+      }
     }
-  } catch {
-    state.error = 'That mix could not be saved.';
-    renderStemsPanel();
+    return { id: result.id, split };
+  } finally {
+    progressSink = null;
+  }
+}
+
+async function separateCurrent() {
+  const song = state.song;
+  if (!song || !song.buffer) return;
+  if (!bridge?.stemSeparate) {
+    state.error = 'Separating instruments needs the installed desktop app.';
+    renderError();
+    return;
+  }
+  setWorking({ label: 'Getting ready…', sub: '', progress: 0, cancellable: true });
+  try {
+    const { id, split } = await separateBuffer(song.buffer, ({ stage, fraction, label, sub }) => {
+      if (state.song !== song) return;
+      setWorking({ label, sub, progress: fraction, cancellable: stage === 'separate' || stage === 'split' });
+    });
+    if (state.song !== song) return;
+    song.songId = id;
+    song.split = split;
+    setWorking({ label: 'Opening the stems…', sub: '', progress: 1, cancellable: false });
+    await loadStems(id, split);
+    if (state.song !== song) return;
+    setWorking(null);
+    void bridge.librarySave?.({ id, name: song.name, duration: song.duration, split }).then(() => refreshLibrary());
+  } catch (error) {
+    if (state.song !== song) return;
+    setWorking(null);
+    state.error = cleanError(error) || 'Separation failed.';
+    renderError();
+  }
+}
+
+/** Read a song's stems back from the cache and put them in the mixer. */
+async function loadStems(id, split) {
+  const order = split ? ORDER_SPLIT : ORDER_PLAIN;
+  const stems = [];
+  for (const key of order) {
+    const bytes = await bridge.stemRead(id, key);
+    // Past the 44-byte header, a WAV of this kind is nothing but samples.
+    const samples = new Int16Array(bytes, 44, Math.floor((bytes.byteLength - 44) / 2));
+    stems.push({ key, ...STEM_DEFS[key], on: true, gain: 0, samples, peaks: peaksOfStem(samples, WAVE_BUCKETS) });
+  }
+  state.stems = stems;
+  state.audition = null;
+  renderStems();
+  remix(true);
+}
+
+/* ------------------------------------------------------------------ *
+ * The mixer
+ * ------------------------------------------------------------------ */
+
+/** What's audible right now: an auditioned stem alone, else every stem that's on. */
+function audibleStems() {
+  if (state.audition) return state.stems.filter(stem => stem.key === state.audition);
+  return state.stems.filter(stem => stem.on);
+}
+
+function mixOf(stems) {
+  return mixStems(stems.map(stem => ({ samples: stem.samples, gain: dbToGain(stem.gain) })));
+}
+
+/** Put the current mix into the player, keeping the place. */
+function remix(fresh = false) {
+  if (!state.stems.length) return;
+  const parts = audibleStems();
+  const channels = parts.length ? mixOf(parts) : mixStems([]).map(() => new Float32Array(Math.floor(state.stems[0].samples.length / 2)));
+  const buffer = toAudioBuffer(player.ensure(), channels);
+  if (fresh) {
+    const at = player.position;
+    player.load(buffer);
+    player.seek(at);
+  } else {
+    player.loadKeepingPlace(buffer);
+  }
+  if (state.song) {
+    state.song.peaks = peaksOfChannel(buffer.getChannelData(0), 800);
+    drawSongWave();
+  }
+}
+
+function toggleStem(key) {
+  const stem = state.stems.find(item => item.key === key);
+  stem.on = !stem.on;
+  renderStems();
+  remix();
+}
+
+function soloStem(key) {
+  const alone = state.stems.every(stem => stem.on === (stem.key === key));
+  state.stems.forEach(stem => { stem.on = alone ? true : stem.key === key; });
+  renderStems();
+  remix();
+}
+
+function auditionStem(key) {
+  state.audition = state.audition === key ? null : key;
+  renderStems();
+  remix();
+}
+
+function setGain(key, db, commit) {
+  const stem = state.stems.find(item => item.key === key);
+  stem.gain = db;
+  const row = el('stems').querySelector(`[data-stem="${key}"]`);
+  if (row) row.querySelector('.gain-label').textContent = `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`;
+  if (commit) remix();
+}
+
+/* ------------------------------------------------------------------ *
+ * Export
+ * ------------------------------------------------------------------ */
+
+/** A name for a mix, the way someone asking for it would say it. */
+function mixLabel(stems) {
+  const on = stems.filter(stem => stem.on);
+  const off = stems.filter(stem => !stem.on);
+  if (!off.length) return 'Full mix';
+  if (on.length === 1) return `${on[0].label} only`;
+  if (off.length === 1) return `No ${off[0].label}`;
+  return on.map(stem => stem.label).join(' + ');
+}
+
+async function resolveOutputFolder() {
+  if (settings.outputFolder) return settings.outputFolder;
+  if (state.song?.path) return folderOf(state.song.path);
+  const chosen = await bridge.pickFolder('Where should the stems go?');
+  if (chosen) { settings.outputFolder = chosen; saveSettings(); renderExport(); }
+  return chosen;
+}
+
+/** Encode stems (or a mix) at the chosen rate and depth. */
+async function encodeAt(channels) {
+  let buffer = toAudioBuffer(player.ensure(), channels);
+  if (settings.sampleRate !== RATE) buffer = await resample(buffer, settings.sampleRate);
+  return encodeWav(buffer, settings.bitDepth);
+}
+
+async function exportNow(overrideMode, only) {
+  if (!state.song || !state.stems.length) return;
+  const mode = overrideMode || settings.exportMode;
+  const name = state.song.name;
+  const files = [];
+  setWorking({ label: 'Exporting…', sub: 'Writing the files.', progress: 0, cancellable: false });
+  try {
+    const folder = await resolveOutputFolder();
+    if (!folder) { setWorking(null); return; }
+    if (mode === 'stems') {
+      const chosen = only ? state.stems.filter(stem => stem.key === only) : state.stems.filter(stem => stem.on);
+      if (!chosen.length) throw new Error('Switch on at least one stem to export.');
+      for (let i = 0; i < chosen.length; i += 1) {
+        const stem = chosen[i];
+        files.push({ name: `${name} - ${stem.file || stem.label}.wav`, bytes: await encodeAt(mixOf([stem])) });
+        setWorking({ label: 'Exporting…', sub: stem.label, progress: (i + 1) / chosen.length, cancellable: false });
+      }
+    } else {
+      const stems = only ? state.stems.map(stem => ({ ...stem, on: stem.key !== only })) : state.stems;
+      const on = stems.filter(stem => stem.on);
+      if (!on.length) throw new Error('Switch on at least one stem to export a mix.');
+      files.push({ name: `${name} - ${mixLabel(stems)}.wav`, bytes: await encodeAt(mixOf(on)) });
+    }
+    const written = await bridge.writeFiles(folder, files);
+    setWorking(null);
+    toast(`Saved ${written.length} file${written.length === 1 ? '' : 's'} to ${folder}`);
+    void bridge.reveal(written[0]);
+  } catch (error) {
+    setWorking(null);
+    toast(cleanError(error) || 'Export failed.', true);
+  }
+}
+
+/** Save one stem alone, wherever the person chooses. */
+async function downloadStem(key) {
+  const stem = state.stems.find(item => item.key === key);
+  if (!stem || !state.song) return;
+  try {
+    const bytes = await encodeAt(mixOf([stem]));
+    await bridge.saveStem(bytes, `${state.song.name} - ${stem.file || stem.label}.wav`);
+  } catch (error) {
+    toast(cleanError(error) || 'That stem could not be saved.', true);
   }
 }
 
 /* ------------------------------------------------------------------ *
- * The library: songs already separated, reopened without splitting again.
- * A song only ever gets an entry once separation succeeds, because that is
- * what makes it reopenable — its stems, not the original file, are what's
- * saved on disk.
+ * Batch
+ * ------------------------------------------------------------------ */
+
+function addBatchFiles(files) {
+  for (const file of files) {
+    if (!(file.type.startsWith('audio/') || file.type.startsWith('video/') || /\.(mp3|wav|m4a|flac|ogg|aac|mp4|mov)$/i.test(file.name))) continue;
+    state.batch.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file, name: baseName(file.name), path: bridge?.pathOf ? bridge.pathOf(file) : '',
+      status: 'queued', progress: 0, note: '',
+    });
+  }
+  renderBatch();
+}
+
+async function runBatch() {
+  if (state.batchRunning || state.working) return;
+  if (!bridge?.stemSeparate) { toast('Batch processing needs the installed desktop app.', true); return; }
+  state.batchRunning = true;
+  renderBatch();
+  for (const item of state.batch) {
+    if (item.status !== 'queued') continue;
+    item.status = 'working';
+    item.note = 'Reading the file';
+    renderBatch();
+    try {
+      const bytes = await item.file.arrayBuffer();
+      const decoded = await player.ensure().decodeAudioData(bytes);
+      const { id, split } = await separateBuffer(decoded, ({ fraction, label }) => {
+        item.progress = fraction;
+        item.note = label;
+        renderBatch();
+      });
+      item.note = 'Saving the stems';
+      renderBatch();
+      const folder = `${settings.outputFolder || (item.path ? folderOf(item.path) : await bridge.musicFolder())}/${item.name} - Stems`;
+      const order = split ? ORDER_SPLIT : ORDER_PLAIN;
+      const files = [];
+      for (const key of order) {
+        const raw = await bridge.stemRead(id, key);
+        const samples = new Int16Array(raw, 44, Math.floor((raw.byteLength - 44) / 2));
+        files.push({ name: `${item.name} - ${STEM_DEFS[key].file || STEM_DEFS[key].label}.wav`, bytes: await encodeAt(mixStems([{ samples, gain: 1 }])) });
+      }
+      await bridge.writeFiles(folder, files);
+      void bridge.librarySave?.({ id, name: item.name, duration: decoded.duration, split });
+      item.status = 'done';
+      item.progress = 1;
+      item.note = folder;
+    } catch (error) {
+      item.status = 'failed';
+      item.note = cleanError(error) || 'Failed';
+    }
+    renderBatch();
+  }
+  state.batchRunning = false;
+  renderBatch();
+  void refreshLibrary();
+  toast('Batch finished.');
+}
+
+/* ------------------------------------------------------------------ *
+ * Library
  * ------------------------------------------------------------------ */
 
 async function refreshLibrary() {
   if (!bridge?.libraryList) return;
   try {
-    renderLibrary(await bridge.libraryList());
+    state.library = await bridge.libraryList();
+    renderLibrary();
   } catch { /* whatever was already shown stays shown */ }
 }
 
-function renderLibrary(entries) {
-  libraryEl.hidden = !entries.length;
-  libraryListEl.innerHTML = entries.map(entry => `
-    <div class="library-item" data-id="${entry.id}">
-      <button class="library-open" data-action="open">
-        <b>${entry.name}</b>
-        <small>${formatTime(entry.duration)}</small>
-      </button>
-      <button class="download-btn" data-action="forget" aria-label="Forget ${entry.name}" title="Forget">&#10005;</button>
-    </div>`).join('');
-
-  libraryListEl.querySelectorAll('.library-item').forEach(row => {
-    const id = row.dataset.id;
-    const entry = entries.find(item => item.id === id);
-    row.querySelector('[data-action="open"]').addEventListener('click', () => void openFromLibrary(entry));
-    row.querySelector('[data-action="forget"]').addEventListener('click', async () => {
-      if (!bridge?.libraryDelete) return;
-      renderLibrary(await bridge.libraryDelete(id));
-    });
-  });
-}
-
-/** Reopen a saved song: its stems are read back and summed into a mix — the
- * original file is never needed again. */
 async function openFromLibrary(entry) {
-  if (!bridge?.stemRead || !entry) return;
-  showError(introError, '');
-  stemData.clear();
-
+  if (state.working) { toast('Wait for the current song to finish first.'); return; }
+  closeSong(false);
   try {
-    for (const stem of STEM_ORDER) {
-      const bytes = await bridge.stemRead(entry.id, stem);
-      stemData.set(stem, new Int16Array(bytes, 44, Math.floor((bytes.byteLength - 44) / 2)));
+    const cached = await bridge.stemCached(entry.id);
+    if (!cached.complete) throw new Error("That song's stems are no longer on disk. Open the file again to separate it.");
+    let split = cached.vocalsSplit;
+    state.song = {
+      name: entry.name, path: '', duration: entry.duration, coverUrl: '', peaks: new Float32Array(800),
+      songId: entry.id, split, buffer: null,
+    };
+    renderSong();
+    setWorking({ label: 'Opening the stems…', sub: '', progress: 0.5, cancellable: false });
+    // A song separated before the vocal split existed can have it now.
+    if (!split && settings.splitVocals && bridge.stemSplitVocals) {
+      try {
+        progressSink = ({ fraction, label, sub }) => setWorking({ label, sub, progress: fraction, cancellable: true });
+        await ensureModels({ karaoke: true });
+        await bridge.stemSplitVocals(entry.id);
+        split = true;
+        state.song.split = true;
+        void bridge.librarySave?.({ ...entry, split: true });
+      } catch (error) {
+        toast(`The vocals couldn't be split (${cleanError(error)}). Showing them as one stem.`, true);
+      } finally {
+        progressSink = null;
+      }
     }
-    state.fileName = entry.name;
-    state.songId = entry.id;
-    state.phase = 'ready';
-    state.error = '';
-    state.audible = Object.fromEntries(STEM_ORDER.map(stem => [stem, true]));
-
-    player.load(toAudioBuffer(mixStems([...stemData.values()])));
-    songName.textContent = state.fileName;
-    songDuration.textContent = formatTime(player.duration);
-    dropZone.hidden = true;
-    songPanel.hidden = false;
-    renderStemsPanel();
-  } catch {
-    showError(introError, "That song's stems could not be found.");
+    await loadStems(entry.id, split);
+    setWorking(null);
+  } catch (error) {
+    setWorking(null);
+    closeSong(false);
+    el('intro-error').textContent = cleanError(error);
+    el('intro-error').hidden = false;
   }
 }
 
@@ -520,67 +522,200 @@ async function openFromLibrary(entry) {
  * Rendering
  * ------------------------------------------------------------------ */
 
-function renderMixer() {
-  const ready = state.phase === 'ready';
-  mixerEl.hidden = !ready;
-  mixerActions.hidden = !ready;
-  exportRow.hidden = !ready;
-  if (!ready) { mixerEl.innerHTML = ''; return; }
+function renderError() {
+  const node = el('song-error');
+  node.textContent = state.error;
+  node.hidden = !state.error || !state.song;
+}
 
-  const allOn = STEM_ORDER.every(stem => state.audible[stem]);
-  everyoneBtn.disabled = allOn;
+function renderWork() {
+  const working = state.working;
+  el('work-card').hidden = !working || !state.song;
+  if (!working) return;
+  el('work-label').textContent = working.label;
+  el('work-sub').textContent = working.sub || '';
+  el('work-pct').textContent = `${Math.round(working.progress * 100)}%`;
+  el('work-bar').style.width = `${Math.round(working.progress * 100)}%`;
+  el('cancel').hidden = !working.cancellable;
+}
 
-  const on = STEM_ORDER.filter(stem => state.audible[stem]);
-  const off = STEM_ORDER.filter(stem => !state.audible[stem]);
-  // Soloed, for the button's own highlight, when exactly one stem is audible.
-  const soloed = on.length === 1 ? on[0] : null;
+function renderSong() {
+  const song = state.song;
+  el('drop-card').hidden = Boolean(song);
+  el('song-card').hidden = !song;
+  el('intro-error').hidden = true;
+  renderError();
+  renderWork();
+  if (!song) return;
+  el('song-name').textContent = song.name;
+  el('song-name').title = song.name;
+  const cover = el('cover');
+  cover.innerHTML = song.coverUrl ? `<img src="${song.coverUrl}" alt="">` : icon('music', 44);
+  drawSongWave();
+}
 
-  // What Export would actually produce, named the way someone asking for it
-  // would say it: "no Vocals", "Bass only", or the full mix.
-  exportMixBtn.textContent =
-    allOn ? 'Export the full mix'
-    : soloed ? `Export ${STEM_LABELS[soloed]} only`
-    : off.length === 1 ? `Export with no ${STEM_LABELS[off[0]]}`
-    : `Export this mix (${on.map(s => STEM_LABELS[s]).join(', ')})`;
+function drawSongWave() {
+  const canvas = el('song-wave');
+  if (!state.song || !canvas.clientWidth) return;
+  drawWave(canvas, state.song.peaks, 'rgba(148,163,184,.75)', { gap: 1 });
+}
 
-  mixerEl.innerHTML = STEM_ORDER.map(stem => {
-    const muted = !state.audible[stem];
+function renderStems() {
+  const has = state.stems.length > 0;
+  el('stems-section').hidden = !has;
+  el('export-panel').hidden = !has;
+  if (!has) { el('stems').innerHTML = ''; return; }
+
+  const holder = el('stems');
+  holder.innerHTML = state.stems.map(stem => {
+    const soloed = state.stems.every(item => item.on === (item.key === stem.key));
     return `
-      <div class="stem-row ${muted ? 'muted' : ''}" data-stem="${stem}">
-        <button class="mute-btn" data-action="toggle" aria-pressed="${!muted}"
-          aria-label="${muted ? 'Unmute' : 'Mute'} ${STEM_LABELS[stem]}"></button>
-        <span class="stem-name">${STEM_LABELS[stem]}</span>
-        <button class="solo-btn ${stem === soloed ? 'active' : ''}" data-action="solo"
-          aria-pressed="${stem === soloed}">Solo</button>
-        <button class="download-btn" data-action="download" aria-label="Download ${STEM_LABELS[stem]}" title="Download this stem alone">&#8681;</button>
+      <div class="stem-row ${stem.on ? '' : 'off'}" data-stem="${stem.key}" style="--c:${stem.color}">
+        <div class="stem-icon" data-icon="${stem.icon}"></div>
+        <button class="stem-chevron" data-action="more" aria-label="More for ${stem.label}" data-icon="chevron-right"></button>
+        <button class="switch ${stem.on ? 'on' : ''}" data-action="toggle" role="switch" aria-checked="${stem.on}" aria-label="${stem.label} in the mix"></button>
+        <span class="stem-name">${stem.label}</span>
+        <div class="stem-wave"><canvas></canvas></div>
+        <span class="stem-divider"></span>
+        <input class="gain" type="range" min="-24" max="12" step="0.5" value="${stem.gain}" aria-label="${stem.label} level" style="--fill:${((stem.gain + 24) / 36 * 100).toFixed(1)}%">
+        <span class="gain-label">${stem.gain > 0 ? '+' : ''}${stem.gain.toFixed(1)} dB</span>
+        <button class="solo ${soloed ? 'active' : ''}" data-action="solo" aria-pressed="${soloed}">Solo</button>
+        <button class="sq ${state.audition === stem.key ? 'active' : ''}" data-action="audition" aria-label="Listen to ${stem.label} alone" title="Listen alone" data-icon="headphones"></button>
+        <button class="sq" data-action="menu" aria-label="More options for ${stem.label}" data-icon="ellipsis"></button>
+        <div class="stem-extra" hidden>
+          <button class="ghost small" data-action="download"><span data-icon="download"></span>Save this stem</button>
+          <button class="ghost small" data-action="export-only"><span data-icon="upload"></span>Export only this</button>
+          <button class="ghost small" data-action="export-without"><span data-icon="scissors"></span>Export everything but this</button>
+        </div>
       </div>`;
   }).join('');
+  hydrateIcons(holder);
 
-  mixerEl.querySelectorAll('.stem-row').forEach(row => {
-    const stem = row.dataset.stem;
-    row.querySelector('[data-action="toggle"]').addEventListener('click', () => toggleStem(stem));
-    row.querySelector('[data-action="solo"]').addEventListener('click', () => soloStem(stem));
-    row.querySelector('[data-action="download"]').addEventListener('click', () => void downloadStem(stem));
+  holder.querySelectorAll('.stem-row').forEach(row => {
+    const key = row.dataset.stem;
+    const stem = state.stems.find(item => item.key === key);
+    drawWave(row.querySelector('canvas'), stem.peaks, getComputedStyle(row).getPropertyValue('--c').trim() || '#fff');
+    row.querySelector('[data-action="toggle"]').addEventListener('click', () => toggleStem(key));
+    row.querySelector('[data-action="solo"]').addEventListener('click', () => soloStem(key));
+    row.querySelector('[data-action="audition"]').addEventListener('click', () => auditionStem(key));
+    row.querySelector('[data-action="more"]').addEventListener('click', () => {
+      const extra = row.querySelector('.stem-extra');
+      extra.hidden = !extra.hidden;
+      row.classList.toggle('open', !extra.hidden);
+    });
+    row.querySelector('[data-action="menu"]').addEventListener('click', event => openMenu(event.currentTarget, key));
+    row.querySelector('[data-action="download"]').addEventListener('click', () => void downloadStem(key));
+    row.querySelector('[data-action="export-only"]').addEventListener('click', () => void exportNow('stems', key));
+    row.querySelector('[data-action="export-without"]').addEventListener('click', () => void exportNow('mix', key));
+    const gain = row.querySelector('.gain');
+    gain.addEventListener('input', () => {
+      gain.style.setProperty('--fill', `${((Number(gain.value) + 24) / 36 * 100).toFixed(1)}%`);
+      setGain(key, Number(gain.value), false);
+    });
+    gain.addEventListener('change', () => setGain(key, Number(gain.value), true));
+  });
+
+  renderExport();
+}
+
+function openMenu(anchor, key) {
+  const menu = el('menu');
+  const stem = state.stems.find(item => item.key === key);
+  menu.innerHTML = `
+    <button data-do="download">${icon('download', 16)}Save this stem…</button>
+    <button data-do="only">${icon('upload', 16)}Export only ${stem.label}</button>
+    <button data-do="without">${icon('scissors', 16)}Export everything but ${stem.label}</button>
+    <button data-do="reset">${icon('refresh-cw', 16)}Reset level to 0 dB</button>`;
+  const rect = anchor.getBoundingClientRect();
+  menu.hidden = false;
+  menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 6)}px`;
+  menu.style.left = `${Math.max(8, rect.right - menu.offsetWidth)}px`;
+  menu.querySelector('[data-do="download"]').onclick = () => { closeMenu(); void downloadStem(key); };
+  menu.querySelector('[data-do="only"]').onclick = () => { closeMenu(); void exportNow('stems', key); };
+  menu.querySelector('[data-do="without"]').onclick = () => { closeMenu(); void exportNow('mix', key); };
+  menu.querySelector('[data-do="reset"]').onclick = () => { closeMenu(); setGain(key, 0, true); renderStems(); };
+  window.setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
+}
+function closeMenu() { el('menu').hidden = true; }
+
+function renderExport() {
+  el('export-rate').value = String(settings.sampleRate);
+  el('export-bits').value = String(settings.bitDepth);
+  el('export-folder-label').textContent = settings.outputFolder || (state.song?.path ? 'Same as source' : 'Ask me where');
+  el('export-mode').querySelectorAll('button').forEach(button => button.classList.toggle('active', button.dataset.mode === settings.exportMode));
+  const on = state.stems.filter(stem => stem.on).length;
+  el('export-now-label').textContent = settings.exportMode === 'stems'
+    ? `Export ${on} Stem${on === 1 ? '' : 's'}`
+    : `Export: ${mixLabel(state.stems)}`;
+  el('export-now').disabled = on === 0;
+  el('batch-folder-label').textContent = settings.outputFolder || 'Same folder as each song';
+}
+
+function renderLibrary() {
+  const entries = state.library;
+  el('library').hidden = !entries.length;
+  el('library-list').innerHTML = entries.map(entry => `
+    <div class="library-item" data-id="${entry.id}">
+      <span class="tile">${icon('music', 20)}</span>
+      <button class="open"><b>${entry.name}</b><small>${formatTime(entry.duration)}</small></button>
+      <span class="tag" ${entry.split ? '' : 'hidden'}>Lead + backing</span>
+      <button class="forget" aria-label="Forget ${entry.name}" title="Forget">${icon('x', 16)}</button>
+    </div>`).join('');
+  el('library-list').querySelectorAll('.library-item').forEach(row => {
+    const entry = entries.find(item => item.id === row.dataset.id);
+    row.querySelector('.open').addEventListener('click', () => void openFromLibrary(entry));
+    row.querySelector('.forget').addEventListener('click', async () => {
+      state.library = await bridge.libraryDelete(entry.id);
+      renderLibrary();
+    });
   });
 }
 
-function renderStemsPanel() {
-  const busy = state.phase === 'downloading' || state.phase === 'separating' || state.phase === 'loading';
-  separateRow.hidden = state.phase !== 'none';
-  progressEl.hidden = !busy;
-  cancelBtn.hidden = state.phase !== 'separating';
+function renderBatch() {
+  const list = el('batch-list');
+  el('batch-empty').hidden = state.batch.length > 0;
+  el('batch-start').disabled = state.batchRunning || !state.batch.some(item => item.status === 'queued');
+  el('batch-start').innerHTML = state.batchRunning ? `${icon('refresh-cw', 16)}Running…` : `${icon('play', 16)}Start batch`;
+  list.innerHTML = state.batch.map(item => `
+    <div class="batch-item ${item.status}" data-id="${item.id}">
+      <span class="tile">${icon('file-audio', 20)}</span>
+      <div><b>${item.name}</b><small>${item.note || (item.status === 'queued' ? 'Waiting' : '')}</small></div>
+      <div class="bar" ${item.status === 'working' ? '' : 'hidden'}><i style="width:${Math.round(item.progress * 100)}%"></i></div>
+      <span class="state">${{ queued: 'Queued', working: `${Math.round(item.progress * 100)}%`, done: 'Done', failed: 'Failed' }[item.status]}</span>
+      <button class="remove" aria-label="Remove" ${item.status === 'working' ? 'disabled' : ''}>${icon('x', 16)}</button>
+    </div>`).join('');
+  list.querySelectorAll('.batch-item').forEach(row => {
+    row.querySelector('.remove').addEventListener('click', () => {
+      state.batch = state.batch.filter(item => item.id !== row.dataset.id);
+      renderBatch();
+    });
+  });
+}
 
-  if (busy) {
-    progressLabel.textContent =
-      state.phase === 'downloading' ? `Downloading the model… ${Math.round(state.progress * 100)}%`
-      : state.phase === 'loading' ? 'Opening the instruments…'
-      : state.progress > 0 ? `Separating… ${Math.round(state.progress * 100)}%`
-      : 'Getting ready. This first step takes half a minute…';
-    progressBar.style.width = `${Math.round(state.progress * 100)}%`;
-  }
-
-  showError(songError, state.error);
-  renderMixer();
+async function renderSettings() {
+  el('settings-folder-label').textContent = settings.outputFolder || 'Same as source';
+  el('settings-rate').value = String(settings.sampleRate);
+  el('settings-bits').value = String(settings.bitDepth);
+  el('settings-split').classList.toggle('on', settings.splitVocals);
+  el('settings-split').setAttribute('aria-checked', String(settings.splitVocals));
+  if (!bridge?.stemStatus) return;
+  try {
+    const status = await bridge.stemStatus();
+    state.models = status;
+    const show = (id, ready) => {
+      const node = el(id);
+      node.textContent = ready ? 'Ready' : 'Not downloaded';
+      node.classList.toggle('ok', ready);
+    };
+    show('model-demucs-status', status.modelReady);
+    show('model-kara-status', status.karaokeReady);
+    el('model-demucs-get').hidden = status.modelReady;
+    el('model-kara-get').hidden = status.karaokeReady;
+    const size = await bridge.stemCacheSize();
+    el('cache-size').textContent = size > 0
+      ? `${(size / 1024 / 1024).toFixed(0)} MB of separated songs, kept so they open instantly.`
+      : 'Nothing kept yet. Every song you split is kept so it opens instantly.';
+  } catch { /* the page still works without the numbers */ }
 }
 
 /* ------------------------------------------------------------------ *
@@ -588,73 +723,155 @@ function renderStemsPanel() {
  * ------------------------------------------------------------------ */
 
 function renderTransport() {
-  playPauseBtn.textContent = player.playing ? '⏸' : '▶';
-  playPauseBtn.setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
-  playPauseBtn.classList.toggle('play', !player.playing);
-  seekEl.max = String(player.duration || 1);
-  if (document.activeElement !== seekEl) seekEl.value = String(Math.min(player.position, player.duration));
-  timeEl.textContent = `${formatTime(player.position)} / ${formatTime(player.duration)}`;
+  const playBtn = el('play-pause');
+  playBtn.innerHTML = icon(player.playing ? 'pause' : 'play', 26);
+  playBtn.setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
+  const seek = el('seek');
+  seek.max = String(player.duration || 1);
+  const position = Math.min(player.position, player.duration);
+  if (document.activeElement !== seek) seek.value = String(position);
+  seek.style.setProperty('--fill', `${player.duration ? position / player.duration * 100 : 0}%`);
+  const text = `${formatTime(position)} / ${formatTime(player.duration)}`;
+  el('time').textContent = text;
+  el('song-time-top').textContent = text;
+  el('playhead').style.left = `${player.duration ? position / player.duration * 100 : 0}%`;
 }
 player.subscribe(renderTransport);
-setInterval(renderTransport, 150);
+setInterval(() => { if (state.song) renderTransport(); }, 100);
 
 /* ------------------------------------------------------------------ *
  * Wiring
  * ------------------------------------------------------------------ */
 
+hydrateIcons();
+
+document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => showPage(button.dataset.page)));
+el('head-settings').addEventListener('click', () => showPage('settings'));
+
+const fileInput = el('file-input');
 const onFiles = files => {
-  const file = [...files].find(item => item.type.startsWith('audio/') || item.type.startsWith('video/')) || files[0];
+  const list = [...files];
+  const file = list.find(item => item.type.startsWith('audio/') || item.type.startsWith('video/')) || list[0];
   if (file) void openFile(file);
 };
-
-chooseFileBtn.addEventListener('click', () => fileInput.click());
-importAnotherBtn.addEventListener('click', () => fileInput.click());
+el('choose-file').addEventListener('click', () => fileInput.click());
+el('open-song').addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => { onFiles(fileInput.files); fileInput.value = ''; });
 
+const dropZone = el('drop-zone');
 dropZone.addEventListener('dragover', event => { event.preventDefault(); dropZone.classList.add('drag-over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-dropZone.addEventListener('drop', event => {
-  event.preventDefault();
-  dropZone.classList.remove('drag-over');
-  onFiles(event.dataTransfer.files);
+dropZone.addEventListener('drop', event => { event.preventDefault(); dropZone.classList.remove('drag-over'); onFiles(event.dataTransfer.files); });
+// Dropping anywhere on the song page while a song is open replaces it.
+el('page-split').addEventListener('dragover', event => event.preventDefault());
+el('page-split').addEventListener('drop', event => { event.preventDefault(); if (state.song) onFiles(event.dataTransfer.files); });
+
+el('play-pause').addEventListener('click', () => (player.playing ? player.pause() : player.play()));
+el('stop').addEventListener('click', () => player.stop());
+el('skip-back').addEventListener('click', () => player.seek(player.position - 10));
+el('skip-fwd').addEventListener('click', () => player.seek(player.position + 10));
+el('seek').addEventListener('input', () => player.seek(Number(el('seek').value)));
+el('song-wave-wrap').addEventListener('click', event => {
+  const rect = event.currentTarget.getBoundingClientRect();
+  player.seek((event.clientX - rect.left) / rect.width * player.duration);
+});
+const volume = el('volume');
+const applyVolume = () => {
+  player.setVolume(Number(volume.value));
+  volume.style.setProperty('--fill', `${Number(volume.value) * 100}%`);
+  el('vol-label').textContent = `${Math.round(Number(volume.value) * 100)}%`;
+};
+volume.addEventListener('input', applyVolume);
+applyVolume();
+el('cancel').addEventListener('click', () => bridge?.stemCancel?.());
+window.addEventListener('resize', () => { drawSongWave(); renderStems(); });
+
+document.addEventListener('keydown', event => {
+  const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(event.target.tagName);
+  if (event.code === 'Space' && !typing && state.song) {
+    event.preventDefault();
+    if (player.playing) player.pause(); else player.play();
+  }
 });
 
-playPauseBtn.addEventListener('click', () => (player.playing ? player.pause() : player.play()));
-stopBtn.addEventListener('click', () => player.stop());
-seekEl.addEventListener('input', () => player.seek(Number(seekEl.value)));
-volumeEl.addEventListener('input', () => player.setVolume(Number(volumeEl.value)));
-player.setVolume(Number(volumeEl.value));
-
-separateBtn.addEventListener('click', () => void separate());
-cancelBtn.addEventListener('click', () => bridge?.stemCancel?.());
-everyoneBtn.addEventListener('click', everyone);
-downloadAllBtn.addEventListener('click', () => void downloadAll());
-exportMixBtn.addEventListener('click', () => void downloadMix());
-
-closeSongBtn.addEventListener('click', () => {
-  player.stop();
-  player.buffer = null;
-  player.duration = 0;
-  stemData.clear();
-  Object.assign(state, {
-    fileName: '', songId: '', phase: 'none', progress: 0, error: '',
-    audible: Object.fromEntries(STEM_ORDER.map(stem => [stem, true])),
-  });
-  songPanel.hidden = true;
-  dropZone.hidden = false;
-  renderStemsPanel();
-  void refreshLibrary();
+el('select-all').addEventListener('click', () => {
+  state.stems.forEach(stem => { stem.on = true; });
+  state.audition = null;
+  renderStems();
+  remix();
 });
 
-void refreshLibrary();
+el('export-mode').querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
+  settings.exportMode = button.dataset.mode;
+  saveSettings();
+  renderExport();
+}));
+el('export-rate').addEventListener('change', () => { settings.sampleRate = Number(el('export-rate').value); saveSettings(); });
+el('export-bits').addEventListener('change', () => { settings.bitDepth = Number(el('export-bits').value); saveSettings(); });
+el('export-folder').addEventListener('click', async () => {
+  const chosen = await bridge?.pickFolder?.('Where should exports go?');
+  if (chosen) { settings.outputFolder = chosen; saveSettings(); renderExport(); }
+});
+el('export-now').addEventListener('click', () => void exportNow());
 
-/* ------------------------------------------------------------------ *
- * Window chrome, only present under Electron
- * ------------------------------------------------------------------ */
+// Batch.
+const batchInput = el('batch-input');
+el('batch-add').addEventListener('click', () => batchInput.click());
+batchInput.addEventListener('change', () => { addBatchFiles(batchInput.files); batchInput.value = ''; });
+el('batch-start').addEventListener('click', () => void runBatch());
+el('batch-clear').addEventListener('click', () => { state.batch = state.batch.filter(item => item.status === 'queued' || item.status === 'working'); renderBatch(); });
+const batchDrop = el('batch-drop');
+batchDrop.addEventListener('dragover', event => { event.preventDefault(); batchDrop.classList.add('drag-over'); });
+batchDrop.addEventListener('dragleave', () => batchDrop.classList.remove('drag-over'));
+batchDrop.addEventListener('drop', event => { event.preventDefault(); batchDrop.classList.remove('drag-over'); addBatchFiles(event.dataTransfer.files); });
 
+// Settings.
+el('settings-folder').addEventListener('click', async () => {
+  const chosen = await bridge?.pickFolder?.('Where should exports go?');
+  if (chosen) { settings.outputFolder = chosen; saveSettings(); void renderSettings(); renderExport(); }
+});
+el('settings-folder-reset').addEventListener('click', () => { settings.outputFolder = ''; saveSettings(); void renderSettings(); renderExport(); });
+el('settings-rate').addEventListener('change', () => { settings.sampleRate = Number(el('settings-rate').value); saveSettings(); renderExport(); });
+el('settings-bits').addEventListener('change', () => { settings.bitDepth = Number(el('settings-bits').value); saveSettings(); renderExport(); });
+el('settings-split').addEventListener('click', () => { settings.splitVocals = !settings.splitVocals; saveSettings(); void renderSettings(); });
+const downloadModel = async (which) => {
+  if (!bridge) return;
+  el('model-bar-wrap').hidden = false;
+  progressSink = ({ fraction }) => { el('model-bar').style.width = `${Math.round(fraction * 100)}%`; };
+  try {
+    await (which === 'demucs' ? bridge.stemDownload() : bridge.stemDownloadKaraoke());
+    toast('Model downloaded.');
+  } catch (error) {
+    toast(cleanError(error) || 'The download failed.', true);
+  } finally {
+    progressSink = null;
+    el('model-bar-wrap').hidden = true;
+    void renderSettings();
+  }
+};
+el('model-demucs-get').addEventListener('click', () => void downloadModel('demucs'));
+el('model-kara-get').addEventListener('click', () => void downloadModel('karaoke'));
+el('cache-clear').addEventListener('click', async () => {
+  if (!bridge?.stemClearCache) return;
+  try {
+    await bridge.stemClearCache();
+    state.library = [];
+    renderLibrary();
+    void renderSettings();
+    toast('Separated songs cleared.');
+  } catch (error) {
+    toast(cleanError(error), true);
+  }
+});
+
+// Window chrome, only under Electron.
 if (bridge?.isDesktop) {
   el('window-controls').hidden = false;
   el('win-min').addEventListener('click', () => bridge.minimize());
   el('win-max').addEventListener('click', () => bridge.maximize());
   el('win-close').addEventListener('click', () => bridge.close());
 }
+
+renderExport();
+renderBatch();
+void refreshLibrary();

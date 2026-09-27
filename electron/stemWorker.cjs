@@ -1,10 +1,10 @@
 /**
  * The process stem separation runs in.
  *
- * Kept apart from the app for two reasons. The network keeps every processor
- * core busy for minutes, and the window should stay responsive while it does.
- * And it is native code: if it ever faults, it takes this process with it and
- * the app carries on, able to say what happened.
+ * Kept apart from the app for two reasons. The networks keep every processor
+ * core busy for minutes, and the window should stay responsive while they do.
+ * And they are native code: if one ever faults, it takes this process with it
+ * and the app carries on, able to say what happened.
  */
 
 const { StemSeparator } = require('./stems.cjs');
@@ -38,12 +38,28 @@ port.on('message', async ({ data }) => {
       send({ type: 'done', job: data.job, result: separator.status() });
       return;
     }
+    if (data.type === 'download-karaoke') {
+      await separator.downloadKaraoke(fraction => send({ type: 'progress', stage: 'download-karaoke', fraction }));
+      send({ type: 'done', job: data.job, result: separator.status() });
+      return;
+    }
     if (data.type === 'separate') {
       const left = new Float32Array(data.left);
       const right = new Float32Array(data.right);
       const result = await separator.separate(left, right,
         fraction => send({ type: 'progress', stage: 'separate', fraction }));
       send({ type: 'done', job: data.job, result });
+      return;
+    }
+    if (data.type === 'split-vocals') {
+      const result = await separator.splitVocals(data.id,
+        fraction => send({ type: 'progress', stage: 'split', fraction }));
+      send({ type: 'done', job: data.job, result });
+      return;
+    }
+    if (data.type === 'clear-cache') {
+      await separator.clearCache();
+      send({ type: 'done', job: data.job, result: true });
     }
   } catch (error) {
     send({ type: 'error', job: data.job, message: error instanceof Error ? error.message : String(error) });

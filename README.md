@@ -1,13 +1,31 @@
 # Easy Stems
 
-Split any song into its instruments — drums, bass, guitar, keys, vocals and
-everything else (aux) — fast, and entirely on your own computer. Nothing is
-uploaded anywhere.
+Split any song into its instruments — drums, bass, guitar, keys, lead
+vocals, backing vocals and everything else (aux) — fast, and entirely on
+your own computer. Nothing is uploaded anywhere.
 
-Separation runs [HT-Demucs](https://github.com/facebookresearch/demucs), Meta's
-model, through ONNX Runtime, on the CPU. The network is downloaded once
-(about 136 MB) the first time you separate a song; after that, a song split
-once opens instantly from the cache.
+Two networks do the work, both through ONNX Runtime on the CPU:
+
+- [HT-Demucs](https://github.com/facebookresearch/demucs) (Meta, MIT) pulls
+  out drums, bass, guitar, keys, vocals and the rest.
+- The UVR MDX-Net Karaoke model from
+  [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui)
+  (MIT) is then run over the vocals stem alone: what it keeps is the backing
+  vocals, and what it removes is the lead. The two always add back up to the
+  vocals exactly.
+
+The models are downloaded once (about 190 MB in total) the first time
+they're needed. A song split once opens instantly from the library after
+that.
+
+## What it does
+
+- Mute, solo or audition any stem; set each one's level.
+- Export the selected stems as separate files, or everything that's audible
+  as one mix — an instrumental with no lead vocal, a bass-only track,
+  whatever the switches say. WAV, 44.1 or 48 kHz, 16 or 24 bit.
+- Batch: queue a folder of songs; each is separated and its stems saved to
+  the output folder.
 
 ## Running it
 
@@ -30,16 +48,23 @@ node node_modules/electron/install.js
 
 ```
 npm install
-npx electron-builder --win nsis   # or: --mac dmg
+npx electron-builder --win nsis   # Windows installer
+npx electron-builder --mac dmg    # macOS; must be run on a Mac
 ```
+
+A macOS `.dmg` can only be built on macOS. From Linux or Windows,
+`npx electron-builder --mac -c.mac.target=zip` produces the app as a zip.
 
 ## How it's built
 
-- `electron/main.cjs` — the app's window and the IPC bridge to separation.
-- `electron/stems.cjs` — the separation engine: chunks a song, runs it
-  through the network with overlapping, cross-faded windows, and caches the
-  result by an audio fingerprint.
-- `electron/stemWorker.cjs` — runs the engine in its own process, so a song
-  being split never freezes the window.
+- `electron/main.cjs` — the app's window, the library, and the IPC bridge.
+- `electron/stems.cjs` — the Demucs engine: chunks a song, runs it through
+  the network with overlapping, cross-faded windows, and caches the result
+  by an audio fingerprint. Also the vocal split, which it hands to:
+- `electron/mdx.cjs` — an MDX-Net runner: the STFT the model expects,
+  overlapping pieces, and the inverse; on top of `electron/fft.cjs`, an FFT
+  for the odd sizes these models use.
+- `electron/stemWorker.cjs` — runs the engines in their own process, so a
+  song being split never freezes the window.
 - `renderer/` — the whole interface: one HTML page, no framework, no build
-  step.
+  step. Icons are from [Lucide](https://lucide.dev) (ISC).
