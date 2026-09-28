@@ -40,7 +40,7 @@
     "mac": {
       "target": [{ "target": "dmg", "arch": ["arm64"] }],
       "category": "public.app-category.music",
-      "artifactName": "${productName}-${version}-macOS.${ext}"
+      "artifactName": "${productName}-${version}-macOS-${arch}.${ext}"
     }
   }
 }
