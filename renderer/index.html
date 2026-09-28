@@ -42,6 +42,14 @@
     <main class="content">
       <!-- ============================ Split ============================ -->
       <section class="page" id="page-split">
+        <div class="mini-transport" id="mini-transport" hidden>
+          <button class="transport-btn small" id="mini-back" aria-label="Back 10 seconds" data-icon="skip-back"></button>
+          <button class="transport-btn play small" id="mini-play" aria-label="Play"><span data-icon="play"></span></button>
+          <button class="transport-btn small" id="mini-fwd" aria-label="Forward 10 seconds" data-icon="skip-forward"></button>
+          <b class="mini-name" id="mini-name"></b>
+          <span class="time" id="mini-time">0:00 / 0:00</span>
+          <input id="mini-seek" class="seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Seek" />
+        </div>
         <header class="page-head">
           <div>
             <h1>Split a song <span class="accent">into its instruments</span></h1>

@@ -258,9 +258,14 @@ class StemSeparator {
       // runtime cannot open it that way.
       executionProviders: this.wantedProvider === 'dml' ? ['dml', 'cpu'] : ['cpu'],
       graphOptimizationLevel: 'all',
-      // Every core but one, which is kept for the window to draw with.
-      intraOpNumThreads: Math.max(1, cores - 1),
+      // Two cores are kept back: one for the window, one for the sound card's
+      // thread, which glitches the song being played when it is starved.
+      intraOpNumThreads: Math.max(1, cores - 2),
       interOpNumThreads: 1,
+      // The runtime's threads spin-wait between operations by default, which
+      // burns every core it was given even while it has nothing to do — and
+      // that is what makes playback stutter alongside it.
+      extra: { session: { 'intra_op.allow_spinning': '0' } },
     };
   }
 

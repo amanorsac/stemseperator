@@ -25,7 +25,10 @@ class Player {
   }
 
   ensure() {
-    this.ctx ??= new (window.AudioContext || window.webkitAudioContext)();
+    // A player, not an instrument: a bigger buffer costs a few milliseconds
+    // of latency nobody notices and rides out a busy processor without
+    // dropping out.
+    this.ctx ??= new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
     if (!this.gain) {
       this.gain = this.ctx.createGain();
       this.gain.gain.value = this.volume;

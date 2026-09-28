@@ -797,6 +797,15 @@ function renderTransport() {
   el('time').textContent = text;
   el('song-time-top').textContent = text;
   el('playhead').style.left = `${player.duration ? position / player.duration * 100 : 0}%`;
+  // The compact bar mirrors the card.
+  el('mini-play').innerHTML = icon(player.playing ? 'pause' : 'play', 20);
+  el('mini-play').setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
+  el('mini-time').textContent = text;
+  const miniSeek = el('mini-seek');
+  miniSeek.max = String(player.duration || 1);
+  if (document.activeElement !== miniSeek) miniSeek.value = String(position);
+  miniSeek.style.setProperty('--fill', `${player.duration ? position / player.duration * 100 : 0}%`);
+  el('mini-name').textContent = state.song?.name || '';
 }
 player.subscribe(renderTransport);
 setInterval(() => { if (state.song) renderTransport(); }, 100);
@@ -833,6 +842,16 @@ el('stop').addEventListener('click', () => player.stop());
 el('skip-back').addEventListener('click', () => player.seek(player.position - 10));
 el('skip-fwd').addEventListener('click', () => player.seek(player.position + 10));
 el('seek').addEventListener('input', () => player.seek(Number(el('seek').value)));
+el('mini-play').addEventListener('click', () => (player.playing ? player.pause() : player.play()));
+el('mini-back').addEventListener('click', () => player.seek(player.position - 10));
+el('mini-fwd').addEventListener('click', () => player.seek(player.position + 10));
+el('mini-seek').addEventListener('input', () => player.seek(Number(el('mini-seek').value)));
+// The bar appears only once the song card itself has scrolled out of view.
+let songCardVisible = true;
+const miniBar = () => { el('mini-transport').hidden = songCardVisible || !state.song; };
+new IntersectionObserver(entries => { songCardVisible = entries[0].isIntersecting; miniBar(); }, { root: el('page-split').parentElement, threshold: 0 })
+  .observe(el('song-card'));
+player.subscribe(miniBar);
 el('song-wave-wrap').addEventListener('click', event => {
   const rect = event.currentTarget.getBoundingClientRect();
   player.seek((event.clientX - rect.left) / rect.width * player.duration);

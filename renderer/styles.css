@@ -161,6 +161,21 @@ input[type=range]{-webkit-appearance:none;background:transparent;margin:0}
 input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:6px;background:linear-gradient(90deg,var(--blue-2) var(--fill,0%),#243250 var(--fill,0%))}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;margin-top:-5px;box-shadow:0 2px 8px rgba(0,0,0,.5)}
 
+/* A compact transport that sticks to the top once the song card has
+   scrolled away, so the stems can be worked without losing the player. */
+.mini-transport{
+  position:sticky;top:-28px;z-index:30;display:flex;align-items:center;gap:12px;
+  margin:-28px -32px 0;padding:10px 32px;background:rgba(7,11,20,.92);backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--line);
+}
+.transport-btn.small{width:38px;height:38px}
+.transport-btn.play.small{width:44px;height:44px;box-shadow:0 6px 16px var(--blue-glow)}
+.transport-btn.play.small svg{width:20px;height:20px}
+.transport-btn.small svg{width:16px;height:16px}
+.mini-name{font-size:14px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini-transport .time{min-width:96px;font-size:13px;margin:0}
+.mini-transport .seek{flex:1}
+
 /* ---------------------------------------------------------------- work */
 .work-card{padding:18px 22px}
 .work-row{display:flex;align-items:center;gap:16px}
