@@ -33,6 +33,10 @@ port.on('message', async ({ data }) => {
       separator.cancel();
       return;
     }
+    if (data.type === 'configure') {
+      separator.configure(data.options);
+      return;
+    }
     if (data.type === 'download') {
       await separator.downloadModel(fraction => send({ type: 'progress', stage: 'download', fraction }));
       send({ type: 'done', job: data.job, result: separator.status() });

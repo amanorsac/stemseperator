@@ -39,6 +39,11 @@ svg{display:block}
   border-left:1px solid var(--line);border-right:1px solid var(--line);background:rgba(15,23,42,.7);
 }
 .window-controls{position:absolute;left:14px;top:0;bottom:0;display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag}
+/* Windows: the three caption buttons where Windows puts them. */
+.window-controls.win{left:auto;right:0;gap:0}
+.window-controls.win button{width:46px;height:44px;display:grid;place-items:center;color:#c8d2e6;border-radius:0}
+.window-controls.win button:hover{background:rgba(255,255,255,.08)}
+.window-controls.win button.close:hover{background:#c42b1c;color:#fff}
 .dot{width:12px;height:12px;border-radius:50%;position:relative}
 .dot-red{background:#ff5f57}.dot-yellow{background:#febc2e}.dot-green{background:#28c840}
 .dot:hover:after{content:"";position:absolute;inset:0;border-radius:50%;background:#0003}

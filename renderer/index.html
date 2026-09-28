@@ -8,12 +8,17 @@
 </head>
 <body>
   <header class="titlebar">
-    <div class="window-controls" id="window-controls" hidden>
+    <div class="window-controls mac" id="window-controls" hidden>
       <button id="win-close" class="dot dot-red" aria-label="Close"></button>
       <button id="win-min" class="dot dot-yellow" aria-label="Minimise"></button>
       <button id="win-max" class="dot dot-green" aria-label="Maximise"></button>
     </div>
     <div class="titlebar-tab">Easy Stems</div>
+    <div class="window-controls win" id="window-controls-win" hidden>
+      <button id="winx-min" aria-label="Minimise"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1"/></svg></button>
+      <button id="winx-max" aria-label="Maximise"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg></button>
+      <button id="winx-close" class="close" aria-label="Close"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1.1"/></svg></button>
+    </div>
   </header>
 
   <div class="shell">
@@ -198,8 +203,12 @@
         <div class="card settings-card">
           <h3>Separation</h3>
           <div class="setting">
-            <div><b>Split vocals into lead and backing</b><small>Runs a second, karaoke-trained model over the vocals. Adds a few minutes per song.</small></div>
+            <div><b>Split vocals into lead and backing</b><small>Runs a second, karaoke-trained model over the vocals. Roughly doubles the time; switch it off when you only need the instruments.</small></div>
             <button class="switch on" id="settings-split" role="switch" aria-checked="true"></button>
+          </div>
+          <div class="setting" id="setting-gpu" hidden>
+            <div><b>Use the graphics card</b><small>DirectML, Windows only. Usually several times faster than the processor. Experimental: if separation stops unexpectedly with this on, switch it off.</small></div>
+            <button class="switch" id="settings-gpu" role="switch" aria-checked="false"></button>
           </div>
         </div>
 

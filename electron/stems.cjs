@@ -155,6 +155,8 @@ class StemSeparator {
 
   status() {
     return {
+      provider: this.provider || this.wantedProvider || 'cpu',
+      gpuAvailable: process.platform === 'win32',
       modelReady: this.modelReady(),
       modelBytes: MODEL_BYTES,
       karaokeReady: this.karaokeReady(),
@@ -234,19 +236,47 @@ class StemSeparator {
    * model and then crashes inside the driver on the first piece — a native
    * fault, which no try/catch can stop. A slower answer beats no app.
    */
+  /**
+   * How to run the networks: on the processor, or on the graphics card
+   * through DirectML on Windows. A change closes any open session so the
+   * next job reopens it the new way.
+   */
+  configure({ provider = 'cpu' } = {}) {
+    const wanted = provider === 'dml' && process.platform === 'win32' ? 'dml' : 'cpu';
+    if (wanted !== this.wantedProvider) {
+      this.session = null;
+      this.karaoke = null;
+    }
+    this.wantedProvider = wanted;
+  }
+
+  /** Session options shared by both networks. */
+  sessionOptions() {
+    const cores = require('os').cpus().length;
+    return {
+      // The graphics card first, with the processor to fall back on if the
+      // runtime cannot open it that way.
+      executionProviders: this.wantedProvider === 'dml' ? ['dml', 'cpu'] : ['cpu'],
+      graphOptimizationLevel: 'all',
+      // Every core but one, which is kept for the window to draw with.
+      intraOpNumThreads: Math.max(1, cores - 1),
+      interOpNumThreads: 1,
+    };
+  }
+
   async open() {
     if (this.session) return this.session;
     const ort = require('onnxruntime-node');
-    this.session = await ort.InferenceSession.create(this.modelPath, {
-      executionProviders: ['cpu'],
-      graphOptimizationLevel: 'all',
-      // Left to itself the runtime takes every core, and the app's window then
-      // has nothing left to draw with: it stutters and looks frozen for minutes.
-      // Half the cores is nearly as fast and leaves the lesson usable.
-      intraOpNumThreads: Math.max(1, Math.floor(require('os').cpus().length / 2)),
-      interOpNumThreads: 1,
-    });
-    this.provider = 'cpu';
+    const options = this.sessionOptions();
+    try {
+      this.session = await ort.InferenceSession.create(this.modelPath, options);
+      this.provider = this.wantedProvider || 'cpu';
+    } catch (error) {
+      if (this.wantedProvider !== 'dml') throw error;
+      // The card could not be opened; the processor always can.
+      this.session = await ort.InferenceSession.create(this.modelPath, { ...options, executionProviders: ['cpu'] });
+      this.provider = 'cpu';
+    }
     return this.session;
   }
 
@@ -288,7 +318,7 @@ class StemSeparator {
     this.cancelled = false;
     try {
       const { MdxModel } = require('./mdx.cjs');
-      this.karaoke ??= new MdxModel({ ...KARAOKE_SPEC, modelPath: this.karaokePath });
+      this.karaoke ??= new MdxModel({ ...KARAOKE_SPEC, modelPath: this.karaokePath, sessionOptions: this.sessionOptions() });
       const { left, right } = decodeWav(await fsp.readFile(cache.files.vocals));
       const [backingL, backingR] = await this.karaoke.separate(
         left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled,

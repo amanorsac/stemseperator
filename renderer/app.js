@@ -31,7 +31,7 @@ const WAVE_BUCKETS = 240;
  * Settings, kept in the page's own storage
  * ------------------------------------------------------------------ */
 
-const DEFAULT_SETTINGS = { sampleRate: 44100, bitDepth: 16, outputFolder: '', splitVocals: true, exportMode: 'stems' };
+const DEFAULT_SETTINGS = { sampleRate: 44100, bitDepth: 16, outputFolder: '', splitVocals: true, exportMode: 'stems', gpu: false };
 const settings = { ...DEFAULT_SETTINGS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('easy-stems.settings') || '{}')); } catch { /* defaults */ }
 function saveSettings() {
@@ -128,9 +128,27 @@ const cleanError = error => (error && error.message ? error.message : String(err
 
 const baseName = name => name.replace(/\.[^.]+$/, '');
 
+/** Elapsed and progress for the stage under way, for a time estimate. */
+const pace = { label: '', startedAt: 0, startProgress: 0 };
 function setWorking(next) {
+  if (next && next.label !== pace.label) {
+    pace.label = next.label;
+    pace.startedAt = Date.now();
+    pace.startProgress = next.progress || 0;
+  }
+  if (!next) pace.label = '';
   state.working = next;
   renderWork();
+}
+
+/** "about 4 min left", once enough of a stage has run to judge its speed. */
+function timeLeft(working) {
+  const done = working.progress - pace.startProgress;
+  const elapsed = (Date.now() - pace.startedAt) / 1000;
+  if (done < 0.04 || elapsed < 8) return '';
+  const remaining = elapsed / done * (1 - working.progress);
+  if (remaining < 45) return 'under a minute left';
+  return `about ${Math.round(remaining / 60)} min left`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -167,7 +185,7 @@ async function openFile(file) {
     const bytes = await file.arrayBuffer();
     // Decoding takes the buffer away, so the tag is read from a copy first.
     const cover = coverFromId3(bytes.slice(0, Math.min(bytes.byteLength, 8 * 1024 * 1024)));
-    const decoded = await player.ensure().decodeAudioData(bytes);
+    const decoded = await decodeFile(bytes);
     state.song = {
       name,
       path: bridge?.pathOf ? bridge.pathOf(file) : '',
@@ -475,7 +493,7 @@ async function runBatch() {
     renderBatch();
     try {
       const bytes = await item.file.arrayBuffer();
-      const decoded = await player.ensure().decodeAudioData(bytes);
+      const decoded = await decodeFile(bytes);
       const { id, split } = await separateBuffer(decoded, ({ fraction, label }) => {
         item.progress = fraction;
         item.note = label;
@@ -573,7 +591,8 @@ function renderWork() {
   el('work-card').hidden = !working || !state.song;
   if (!working) return;
   el('work-label').textContent = working.label;
-  el('work-sub').textContent = working.sub || '';
+  const left = timeLeft(working);
+  el('work-sub').textContent = [working.sub, left].filter(Boolean).join(' · ');
   el('work-pct').textContent = `${Math.round(working.progress * 100)}%`;
   el('work-bar').style.width = `${Math.round(working.progress * 100)}%`;
   el('cancel').hidden = !working.cancellable;
@@ -737,6 +756,8 @@ async function renderSettings() {
   dropdowns['settings-rate']?.set(settings.sampleRate);
   dropdowns['settings-bits']?.set(settings.bitDepth);
   el('settings-split').classList.toggle('on', settings.splitVocals);
+  el('settings-gpu').classList.toggle('on', settings.gpu);
+  el('settings-gpu').setAttribute('aria-checked', String(settings.gpu));
   el('settings-split').setAttribute('aria-checked', String(settings.splitVocals));
   if (!bridge?.stemStatus) return;
   try {
@@ -747,6 +768,7 @@ async function renderSettings() {
       node.textContent = ready ? 'Ready' : 'Not downloaded';
       node.classList.toggle('ok', ready);
     };
+    el('setting-gpu').hidden = !status.gpuAvailable;
     show('model-demucs-status', status.modelReady);
     show('model-kara-status', status.karaokeReady);
     el('model-demucs-get').hidden = status.modelReady;
@@ -875,6 +897,14 @@ el('settings-folder-reset').addEventListener('click', () => { settings.outputFol
 initDropdown('settings-rate', value => { settings.sampleRate = Number(value); saveSettings(); renderExport(); });
 initDropdown('settings-bits', value => { settings.bitDepth = Number(value); saveSettings(); renderExport(); });
 el('settings-split').addEventListener('click', () => { settings.splitVocals = !settings.splitVocals; saveSettings(); void renderSettings(); });
+el('settings-gpu').addEventListener('click', async () => {
+  settings.gpu = !settings.gpu;
+  saveSettings();
+  await bridge?.stemConfigure?.({ provider: settings.gpu ? 'dml' : 'cpu' });
+  void renderSettings();
+  if (state.working) toast('Takes effect on the next song.');
+});
+void bridge?.stemConfigure?.({ provider: settings.gpu ? 'dml' : 'cpu' });
 const downloadModel = async (which) => {
   if (!bridge) return;
   el('model-bar-wrap').hidden = false;
@@ -907,10 +937,13 @@ el('cache-clear').addEventListener('click', async () => {
 
 // Window chrome, only under Electron.
 if (bridge?.isDesktop) {
-  el('window-controls').hidden = false;
-  el('win-min').addEventListener('click', () => bridge.minimize());
-  el('win-max').addEventListener('click', () => bridge.maximize());
-  el('win-close').addEventListener('click', () => bridge.close());
+  // Each platform's own caption buttons, where that platform puts them.
+  const mac = bridge.platform === 'darwin';
+  el('window-controls').hidden = !mac;
+  el('window-controls-win').hidden = mac;
+  const wire = (id, action) => el(id).addEventListener('click', () => bridge[action]());
+  wire('win-min', 'minimize'); wire('win-max', 'maximize'); wire('win-close', 'close');
+  wire('winx-min', 'minimize'); wire('winx-max', 'maximize'); wire('winx-close', 'close');
 }
 
 // The About screen's facts, and where exports go, from the main process.

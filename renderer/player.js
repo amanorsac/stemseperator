@@ -64,10 +64,15 @@ class Player {
     else this.notify();
   }
 
-  play() {
+  async play() {
     if (!this.buffer || this.playing) return;
+    // The context is only ever made here, on a click, so the browser never
+    // holds it suspended; and if it was, it is woken before anything starts.
     this.ensure();
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    if (this.ctx.state === 'suspended') {
+      try { await this.ctx.resume(); } catch { /* the start below will tell */ }
+    }
+    if (this.playing) return;
     if (this.startOffset >= this.duration - 0.01) this.startOffset = 0;
     const node = this.ctx.createBufferSource();
     node.buffer = this.buffer;
@@ -147,10 +152,17 @@ function mixStems(parts) {
   return [left, right];
 }
 
-function toAudioBuffer(ctx, channels, rate = RATE) {
-  const buffer = ctx.createBuffer(2, Math.max(1, channels[0].length), rate);
+/** Needs no AudioContext, so a mix can be built before the first click. */
+function toAudioBuffer(_ctx, channels, rate = RATE) {
+  const buffer = new AudioBuffer({ numberOfChannels: 2, length: Math.max(1, channels[0].length), sampleRate: rate });
   channels.forEach((data, index) => buffer.copyToChannel(data, index));
   return buffer;
+}
+
+/** Decode a file without opening the live audio engine. */
+async function decodeFile(bytes) {
+  const scratch = new OfflineAudioContext(2, 1, RATE);
+  return scratch.decodeAudioData(bytes);
 }
 
 /** Render a buffer at another sample rate, the way a DAW would. */

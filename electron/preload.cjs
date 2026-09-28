@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('easyStems', {
 
   /* Separation. */
   stemStatus: () => ipcRenderer.invoke('stems:status'),
+  /** { provider: 'cpu' | 'dml' } — the graphics card is Windows only. */
+  stemConfigure: options => ipcRenderer.invoke('stems:configure', options),
   stemDownload: () => ipcRenderer.invoke('stems:download'),
   stemDownloadKaraoke: () => ipcRenderer.invoke('stems:download-karaoke'),
   stemSeparate: (left, right) => ipcRenderer.invoke('stems:separate', left, right),

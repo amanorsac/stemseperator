@@ -116,13 +116,26 @@ app.whenReady().then(() => {
     });
     worker.on('exit', () => {
       if (stemWorker === worker) stemWorker = null;
-      stemJobs.forEach(({ reject }) => reject(new Error('The separation engine stopped unexpectedly. Try again.')));
+      const hint = engineOptions.provider === 'dml'
+        ? ' The graphics card is switched on in Settings; if this keeps happening, switch it off.'
+        : '';
+      stemJobs.forEach(({ reject }) => reject(new Error(`The separation engine stopped unexpectedly. Try again.${hint}`)));
       stemJobs.clear();
     });
     worker.postMessage({ type: 'init', dataFolder: app.getPath('userData') });
+    worker.postMessage({ type: 'configure', options: engineOptions });
     stemWorker = worker;
     return worker;
   };
+
+  /** How the renderer asked the engine to run; applied to every worker started. */
+  let engineOptions = { provider: 'cpu' };
+  ipcMain.handle('stems:configure', async (_event, options) => {
+    engineOptions = { provider: options?.provider === 'dml' ? 'dml' : 'cpu' };
+    stemFiles.configure(engineOptions);
+    stemWorker?.postMessage({ type: 'configure', options: engineOptions });
+    return engineOptions;
+  });
 
   const askStemWorker = message => new Promise((resolve, reject) => {
     stemJob += 1;

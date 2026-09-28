@@ -52,11 +52,14 @@ class MdxModel {
   async open() {
     if (this.session) return this.session;
     const ort = require('onnxruntime-node');
-    this.session = await ort.InferenceSession.create(this.spec.modelPath, {
+    const base = this.spec.sessionOptions || {
       executionProviders: ['cpu'],
       graphOptimizationLevel: 'all',
-      intraOpNumThreads: Math.max(1, Math.floor(require('os').cpus().length / 2)),
+      intraOpNumThreads: Math.max(1, require('os').cpus().length - 1),
       interOpNumThreads: 1,
+    };
+    const options = {
+      ...base,
       // This network is memory-hungry: with its arena on, the runtime grows a
       // single gigabyte-scale block on the second piece, which the allocator
       // inside Electron's worker processes refuses, taking the process with it.
@@ -64,7 +67,13 @@ class MdxModel {
       // no slower.
       enableCpuMemArena: false,
       enableMemPattern: false,
-    });
+    };
+    try {
+      this.session = await ort.InferenceSession.create(this.spec.modelPath, options);
+    } catch (error) {
+      if (!options.executionProviders.includes('dml')) throw error;
+      this.session = await ort.InferenceSession.create(this.spec.modelPath, { ...options, executionProviders: ['cpu'] });
+    }
     return this.session;
   }
 
