@@ -22,16 +22,24 @@ const STEM_DEFS = {
   lead_vocals: { label: 'Lead Vocals', color: 'var(--lead)', icon: 'mic-vocal' },
   backing_vocals: { label: 'Backing Vocals', color: 'var(--backing)', icon: 'users' },
   other: { label: 'Aux / Other', file: 'Aux', color: 'var(--aux)', icon: 'ellipsis' },
+  instrumental: { label: 'Instrumental', color: 'var(--aux)', icon: 'music' },
 };
-const ORDER_SPLIT = ['drums', 'bass', 'guitar', 'piano', 'lead_vocals', 'backing_vocals', 'other'];
-const ORDER_PLAIN = ['drums', 'bass', 'guitar', 'piano', 'vocals', 'other'];
+
+/** The stems a song has, in the order they're shown, by how it was separated. */
+function stemOrder(mode, split) {
+  if (mode === 'quick') return split ? ['lead_vocals', 'backing_vocals', 'instrumental'] : ['vocals', 'instrumental'];
+  return split
+    ? ['drums', 'bass', 'guitar', 'piano', 'lead_vocals', 'backing_vocals', 'other']
+    : ['drums', 'bass', 'guitar', 'piano', 'vocals', 'other'];
+}
 const WAVE_BUCKETS = 240;
+const SONG_BUCKETS = 800;
 
 /* ------------------------------------------------------------------ *
  * Settings, kept in the page's own storage
  * ------------------------------------------------------------------ */
 
-const DEFAULT_SETTINGS = { sampleRate: 44100, bitDepth: 16, outputFolder: '', splitVocals: true, exportMode: 'stems', gpu: false };
+const DEFAULT_SETTINGS = { sampleRate: 44100, bitDepth: 16, outputFolder: '', splitVocals: true, exportMode: 'stems', gpu: false, mode: 'full' };
 const settings = { ...DEFAULT_SETTINGS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('easy-stems.settings') || '{}')); } catch { /* defaults */ }
 function saveSettings() {
@@ -191,9 +199,10 @@ async function openFile(file) {
       path: bridge?.pathOf ? bridge.pathOf(file) : '',
       duration: decoded.duration,
       coverUrl: cover ? URL.createObjectURL(cover) : '',
-      peaks: peaksOfChannel(decoded.getChannelData(0), 800),
+      peaks: peaksOfChannel(decoded.getChannelData(0), SONG_BUCKETS),
       songId: '',
       split: false,
+      mode: settings.mode,
       buffer: decoded,
     };
     player.load(decoded);
@@ -208,9 +217,7 @@ async function openFile(file) {
 }
 
 function closeSong(refresh = true) {
-  player.stop();
-  player.buffer = null;
-  player.duration = 0;
+  player.unload();
   if (state.song?.coverUrl) URL.revokeObjectURL(state.song.coverUrl);
   state.song = null;
   state.stems = [];
@@ -237,7 +244,9 @@ bridge?.onStemProgress?.(({ stage, fraction }) => {
   const labels = {
     download: ['Downloading the separation model…', 'About 136 MB, once only.'],
     'download-karaoke': ['Downloading the vocal model…', 'About 53 MB, once only.'],
+    'download-quick': ['Downloading the quick model…', 'About 53 MB, once only.'],
     separate: ['Separating the instruments…', 'Drums, bass, guitar, keys, vocals and the rest.'],
+    quick: ['Separating the vocals…', 'Quick mode: vocals and instrumental.'],
     split: ['Splitting the vocals…', 'Lifting the lead singer off the backing vocals.'],
   };
   const [label, sub] = labels[stage] || ['Working…', ''];
@@ -245,27 +254,33 @@ bridge?.onStemProgress?.(({ stage, fraction }) => {
 });
 
 /** Fetch whichever networks a step needs and doesn't have yet. */
-async function ensureModels({ demucs = false, karaoke = false }) {
+async function ensureModels({ demucs = false, karaoke = false, quick = false }) {
   if (!bridge?.stemStatus) throw new Error('Separating instruments needs the installed desktop app.');
   const status = await bridge.stemStatus();
   state.models = status;
   if (demucs && !status.modelReady) await bridge.stemDownload();
+  if (quick && !status.quickReady) await bridge.stemDownloadQuick();
   if (karaoke && !status.karaokeReady) await bridge.stemDownloadKaraoke();
   state.models = await bridge.stemStatus();
 }
 
 /**
- * Separate a decoded song, splitting its vocals when asked to. Resolves with
- * the song's fingerprint and whether the split happened.
+ * Separate a decoded song — quickly into vocals and instrumental, or fully
+ * into six instruments — splitting its vocals when asked to. Resolves with
+ * the song's fingerprint, how it was separated and whether the split happened.
  */
-async function separateBuffer(buffer, onProgress) {
+async function separateBuffer(buffer, onProgress, mode = settings.mode) {
   progressSink = onProgress;
   try {
+    const quick = mode === 'quick';
     onProgress({ stage: 'prepare', fraction: 0, label: 'Getting ready…', sub: 'Checking the models are here.' });
-    await ensureModels({ demucs: true, karaoke: settings.splitVocals });
+    await ensureModels({ demucs: !quick, quick, karaoke: settings.splitVocals });
     const [left, right] = await prepare44k(buffer);
-    onProgress({ stage: 'separate', fraction: 0, label: 'Separating the instruments…', sub: 'The first piece takes half a minute to warm up.' });
-    const result = await bridge.stemSeparate(left.buffer, right.buffer);
+    if (quick) onProgress({ stage: 'quick', fraction: 0, label: 'Separating the vocals…', sub: 'Quick mode: vocals and instrumental.' });
+    else onProgress({ stage: 'separate', fraction: 0, label: 'Separating the instruments…', sub: 'The first piece takes half a minute to warm up.' });
+    const result = await bridge.stemSeparate(left.buffer, right.buffer, mode);
+    // A song already separated the full way is opened that way, whatever was asked.
+    mode = result.mode === 'quick' ? 'quick' : 'full';
     let split = false;
     if (settings.splitVocals) {
       try {
@@ -277,7 +292,7 @@ async function separateBuffer(buffer, onProgress) {
         toast(`The vocals couldn't be split (${cleanError(error)}). Showing them as one stem.`, true);
       }
     }
-    return { id: result.id, split };
+    return { id: result.id, split, mode };
   } finally {
     progressSink = null;
   }
@@ -293,18 +308,19 @@ async function separateCurrent() {
   }
   setWorking({ label: 'Getting ready…', sub: '', progress: 0, cancellable: true });
   try {
-    const { id, split } = await separateBuffer(song.buffer, ({ stage, fraction, label, sub }) => {
+    const { id, split, mode } = await separateBuffer(song.buffer, ({ stage, fraction, label, sub }) => {
       if (state.song !== song) return;
-      setWorking({ label, sub, progress: fraction, cancellable: stage === 'separate' || stage === 'split' });
-    });
+      setWorking({ label, sub, progress: fraction, cancellable: ['separate', 'quick', 'split'].includes(stage) });
+    }, song.mode);
     if (state.song !== song) return;
     song.songId = id;
     song.split = split;
+    song.mode = mode;
     setWorking({ label: 'Opening the stems…', sub: '', progress: 1, cancellable: false });
-    await loadStems(id, split);
+    await loadStems(id, split, mode);
     if (state.song !== song) return;
     setWorking(null);
-    void bridge.librarySave?.({ id, name: song.name, duration: song.duration, split }).then(() => refreshLibrary());
+    void bridge.librarySave?.({ id, name: song.name, duration: song.duration, split, mode }).then(() => refreshLibrary());
   } catch (error) {
     if (state.song !== song) return;
     setWorking(null);
@@ -314,14 +330,19 @@ async function separateCurrent() {
 }
 
 /** Read a song's stems back from the cache and put them in the mixer. */
-async function loadStems(id, split) {
-  const order = split ? ORDER_SPLIT : ORDER_PLAIN;
+async function loadStems(id, split, mode) {
+  const order = stemOrder(mode, split);
   const stems = [];
   for (const key of order) {
     const bytes = await bridge.stemRead(id, key);
     // Past the 44-byte header, a WAV of this kind is nothing but samples.
     const samples = new Int16Array(bytes, 44, Math.floor((bytes.byteLength - 44) / 2));
-    stems.push({ key, ...STEM_DEFS[key], on: true, gain: 0, samples, peaks: peaksOfStem(samples, WAVE_BUCKETS) });
+    stems.push({
+      key, ...STEM_DEFS[key], on: true, gain: 0, samples,
+      peaks: peaksOfStem(samples, WAVE_BUCKETS),
+      songPeaks: peaksOfStem(samples, SONG_BUCKETS),
+      buffer: bufferOfStem(samples),
+    });
   }
   state.stems = stems;
   state.audition = null;
@@ -343,21 +364,34 @@ function mixOf(stems) {
   return mixStems(stems.map(stem => ({ samples: stem.samples, gain: dbToGain(stem.gain) })));
 }
 
-/** Put the current mix into the player, keeping the place. */
+/** What a stem contributes right now: its level, or nothing if it's out. */
+function liveGain(stem) {
+  const heard = state.audition ? stem.key === state.audition : stem.on;
+  return heard ? dbToGain(stem.gain) : 0;
+}
+
+/**
+ * Apply the switches and levels to the player. Every stem is always playing;
+ * what changes is how loud each one is, so nothing ever stops or restarts.
+ * `fresh` is for the stems having just arrived: they replace whatever was
+ * playing (the original song, usually) without losing the place.
+ */
 function remix(fresh = false) {
   if (!state.stems.length) return;
-  const parts = audibleStems();
-  const channels = parts.length ? mixOf(parts) : mixStems([]).map(() => new Float32Array(Math.floor(state.stems[0].samples.length / 2)));
-  const buffer = toAudioBuffer(player.ensure(), channels);
   if (fresh) {
-    const at = player.position;
-    player.load(buffer);
-    player.seek(at);
+    player.setTracks(state.stems.map(stem => ({ id: stem.key, buffer: stem.buffer, gain: liveGain(stem) })));
   } else {
-    player.loadKeepingPlace(buffer);
+    player.setGains(Object.fromEntries(state.stems.map(stem => [stem.key, liveGain(stem)])));
   }
   if (state.song) {
-    state.song.peaks = peaksOfChannel(buffer.getChannelData(0), 800);
+    // The song's waveform follows the mix: each stem's peaks at its level.
+    const peaks = new Float32Array(SONG_BUCKETS);
+    state.stems.forEach(stem => {
+      const gain = liveGain(stem);
+      if (!gain) return;
+      for (let i = 0; i < SONG_BUCKETS; i += 1) peaks[i] += stem.songPeaks[i] * gain;
+    });
+    state.song.peaks = peaks;
     drawSongWave();
   }
 }
@@ -387,6 +421,8 @@ function setGain(key, db, commit) {
   stem.gain = db;
   const row = el('stems').querySelector(`[data-stem="${key}"]`);
   if (row) row.querySelector('.gain-label').textContent = `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`;
+  // Heard as the slider moves; the waveform only redrawn when it's let go.
+  player.setTrackGain(key, liveGain(stem));
   if (commit) remix();
 }
 
@@ -416,7 +452,7 @@ async function resolveOutputFolder(songName) {
 
 /** Encode stems (or a mix) at the chosen rate and depth. */
 async function encodeAt(channels) {
-  let buffer = toAudioBuffer(player.ensure(), channels);
+  let buffer = toAudioBuffer(null, channels);
   if (settings.sampleRate !== RATE) buffer = await resample(buffer, settings.sampleRate);
   return encodeWav(buffer, settings.bitDepth);
 }
@@ -494,7 +530,7 @@ async function runBatch() {
     try {
       const bytes = await item.file.arrayBuffer();
       const decoded = await decodeFile(bytes);
-      const { id, split } = await separateBuffer(decoded, ({ fraction, label }) => {
+      const { id, split, mode } = await separateBuffer(decoded, ({ fraction, label }) => {
         item.progress = fraction;
         item.note = label;
         renderBatch();
@@ -502,7 +538,7 @@ async function runBatch() {
       item.note = 'Saving the stems';
       renderBatch();
       const folder = await resolveOutputFolder(item.name);
-      const order = split ? ORDER_SPLIT : ORDER_PLAIN;
+      const order = stemOrder(mode, split);
       const files = [];
       for (const key of order) {
         const raw = await bridge.stemRead(id, key);
@@ -510,7 +546,7 @@ async function runBatch() {
         files.push({ name: `${item.name} - ${STEM_DEFS[key].file || STEM_DEFS[key].label}.wav`, bytes: await encodeAt(mixStems([{ samples, gain: 1 }])) });
       }
       await bridge.writeFiles(folder, files);
-      void bridge.librarySave?.({ id, name: item.name, duration: decoded.duration, split });
+      void bridge.librarySave?.({ id, name: item.name, duration: decoded.duration, split, mode });
       item.status = 'done';
       item.progress = 1;
       item.note = folder;
@@ -543,11 +579,12 @@ async function openFromLibrary(entry) {
   closeSong(false);
   try {
     const cached = await bridge.stemCached(entry.id);
-    if (!cached.complete) throw new Error("That song's stems are no longer on disk. Open the file again to separate it.");
+    if (!cached.complete && !cached.quick) throw new Error("That song's stems are no longer on disk. Open the file again to separate it.");
+    const mode = cached.complete ? 'full' : 'quick';
     let split = cached.vocalsSplit;
     state.song = {
-      name: entry.name, path: '', duration: entry.duration, coverUrl: '', peaks: new Float32Array(800),
-      songId: entry.id, split, buffer: null,
+      name: entry.name, path: '', duration: entry.duration, coverUrl: '', peaks: new Float32Array(SONG_BUCKETS),
+      songId: entry.id, split, mode, buffer: null,
     };
     renderSong();
     setWorking({ label: 'Opening the stems…', sub: '', progress: 0.5, cancellable: false });
@@ -566,7 +603,7 @@ async function openFromLibrary(entry) {
         progressSink = null;
       }
     }
-    await loadStems(entry.id, split);
+    await loadStems(entry.id, split, mode);
     setWorking(null);
   } catch (error) {
     setWorking(null);
@@ -717,6 +754,7 @@ function renderLibrary() {
     <div class="library-item" data-id="${entry.id}">
       <span class="tile">${icon('music', 20)}</span>
       <button class="open"><b>${entry.name}</b><small>${formatTime(entry.duration)}</small></button>
+      <span class="tag quick" ${entry.mode === 'quick' ? '' : 'hidden'}>Quick</span>
       <span class="tag" ${entry.split ? '' : 'hidden'}>Lead + backing</span>
       <button class="forget" aria-label="Forget ${entry.name}" title="Forget">${icon('x', 16)}</button>
     </div>`).join('');
@@ -756,6 +794,7 @@ async function renderSettings() {
   dropdowns['settings-rate']?.set(settings.sampleRate);
   dropdowns['settings-bits']?.set(settings.bitDepth);
   el('settings-split').classList.toggle('on', settings.splitVocals);
+  dropdowns['settings-mode']?.set(settings.mode);
   el('settings-gpu').classList.toggle('on', settings.gpu);
   el('settings-gpu').setAttribute('aria-checked', String(settings.gpu));
   el('settings-split').setAttribute('aria-checked', String(settings.splitVocals));
@@ -771,8 +810,10 @@ async function renderSettings() {
     el('setting-gpu').hidden = !status.gpuAvailable;
     show('model-demucs-status', status.modelReady);
     show('model-kara-status', status.karaokeReady);
+    show('model-quick-status', status.quickReady);
     el('model-demucs-get').hidden = status.modelReady;
     el('model-kara-get').hidden = status.karaokeReady;
+    el('model-quick-get').hidden = status.quickReady;
     const size = await bridge.stemCacheSize();
     el('cache-size').textContent = size > 0
       ? `${(size / 1024 / 1024).toFixed(0)} MB of separated songs, kept so they open instantly.`
@@ -916,6 +957,23 @@ el('settings-folder-reset').addEventListener('click', () => { settings.outputFol
 initDropdown('settings-rate', value => { settings.sampleRate = Number(value); saveSettings(); renderExport(); });
 initDropdown('settings-bits', value => { settings.bitDepth = Number(value); saveSettings(); renderExport(); });
 el('settings-split').addEventListener('click', () => { settings.splitVocals = !settings.splitVocals; saveSettings(); void renderSettings(); });
+initDropdown('settings-mode', value => { settings.mode = value; saveSettings(); renderModePicker(); });
+
+/** Quick or Full, chosen right where the song is dropped. */
+function renderModePicker() {
+  document.querySelectorAll('#mode-picker button').forEach(button => {
+    const chosen = button.dataset.mode === settings.mode;
+    button.classList.toggle('active', chosen);
+    button.setAttribute('aria-checked', String(chosen));
+  });
+}
+document.querySelectorAll('#mode-picker button').forEach(button => button.addEventListener('click', () => {
+  settings.mode = button.dataset.mode;
+  saveSettings();
+  renderModePicker();
+  dropdowns['settings-mode']?.set(settings.mode);
+}));
+renderModePicker();
 el('settings-gpu').addEventListener('click', async () => {
   settings.gpu = !settings.gpu;
   saveSettings();
@@ -929,7 +987,7 @@ const downloadModel = async (which) => {
   el('model-bar-wrap').hidden = false;
   progressSink = ({ fraction }) => { el('model-bar').style.width = `${Math.round(fraction * 100)}%`; };
   try {
-    await (which === 'demucs' ? bridge.stemDownload() : bridge.stemDownloadKaraoke());
+    await ({ demucs: bridge.stemDownload, karaoke: bridge.stemDownloadKaraoke, quick: bridge.stemDownloadQuick }[which])();
     toast('Model downloaded.');
   } catch (error) {
     toast(cleanError(error) || 'The download failed.', true);
@@ -941,6 +999,7 @@ const downloadModel = async (which) => {
 };
 el('model-demucs-get').addEventListener('click', () => void downloadModel('demucs'));
 el('model-kara-get').addEventListener('click', () => void downloadModel('karaoke'));
+el('model-quick-get').addEventListener('click', () => void downloadModel('quick'));
 el('cache-clear').addEventListener('click', async () => {
   if (!bridge?.stemClearCache) return;
   try {

@@ -4,23 +4,29 @@ Split any song into its instruments — drums, bass, guitar, keys, lead
 vocals, backing vocals and everything else (aux) — fast, and entirely on
 your own computer. Nothing is uploaded anywhere.
 
-Two networks do the work, both through ONNX Runtime on the CPU:
+Three networks do the work, all through ONNX Runtime (CPU, or DirectML on
+Windows when the graphics card is switched on in Settings):
 
-- [HT-Demucs](https://github.com/facebookresearch/demucs) (Meta, MIT) pulls
-  out drums, bass, guitar, keys, vocals and the rest.
+- **Full mode:** [HT-Demucs](https://github.com/facebookresearch/demucs)
+  (Meta, MIT) pulls out drums, bass, guitar, keys, vocals and the rest.
+- **Quick mode:** the UVR MDX-Net Inst Main model (MIT) finds the vocals and
+  leaves everything else as one instrumental — a far smaller network,
+  several times faster than Full.
 - The UVR MDX-Net Karaoke model from
   [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui)
   (MIT) is then run over the vocals stem alone: what it keeps is the backing
   vocals, and what it removes is the lead. The two always add back up to the
   vocals exactly.
 
-The models are downloaded once (about 190 MB in total) the first time
-they're needed. A song split once opens instantly from the library after
+The models are downloaded once (136 MB, 53 MB and 53 MB) the first time
+each is needed. A song split once opens instantly from the library after
 that.
 
 ## What it does
 
-- Mute, solo or audition any stem; set each one's level.
+- Mute, solo or audition any stem; set each one's level. Every stem plays
+  as its own synced track, so switches and levels are instant and seeking
+  never stops the music. The original song plays while it's being separated.
 - Export the selected stems as separate files, or everything that's audible
   as one mix — an instrumental with no lead vocal, a bass-only track,
   whatever the switches say. WAV, 44.1 or 48 kHz, 16 or 24 bit.

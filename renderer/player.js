@@ -7,20 +7,26 @@
 const RATE = 44100;
 
 /* ------------------------------------------------------------------ *
- * A small player: one AudioBuffer at a time, played, paused and sought
- * without ever losing track of where it was.
+ * The player: any number of tracks of the same length, played in lock-step.
+ *
+ * Every stem is its own source feeding its own gain node, so switching a
+ * stem off, soloing one, or riding its level is a gain change on a running
+ * graph — instant, click-free, and never a restart. Only seeking restarts
+ * the sources, and it starts them all at the same clock tick so they can
+ * never drift apart.
  * ------------------------------------------------------------------ */
 class Player {
   constructor() {
     this.ctx = null;
-    this.gain = null;
-    this.source = null;
-    this.buffer = null;
+    this.master = null;
+    /** [{ id, buffer, gain (linear), node (GainNode|null), source (AudioBufferSourceNode|null) }] */
+    this.tracks = [];
     this.duration = 0;
     this.playing = false;
     this.startedAtCtxTime = 0;
     this.startOffset = 0;
     this.volume = 0.8;
+    this.generation = 0;
     this.listeners = new Set();
   }
 
@@ -29,10 +35,10 @@ class Player {
     // of latency nobody notices and rides out a busy processor without
     // dropping out.
     this.ctx ??= new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
-    if (!this.gain) {
-      this.gain = this.ctx.createGain();
-      this.gain.gain.value = this.volume;
-      this.gain.connect(this.ctx.destination);
+    if (!this.master) {
+      this.master = this.ctx.createGain();
+      this.master.gain.value = this.volume;
+      this.master.connect(this.ctx.destination);
     }
     return this.ctx;
   }
@@ -40,69 +46,86 @@ class Player {
   subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   notify() { this.listeners.forEach(fn => fn()); }
 
+  get loaded() { return this.tracks.length > 0; }
+
   get position() {
     if (!this.playing || !this.ctx) return this.startOffset;
-    return Math.min(this.duration, this.startOffset + (this.ctx.currentTime - this.startedAtCtxTime));
+    return Math.max(0, Math.min(this.duration, this.startOffset + (this.ctx.currentTime - this.startedAtCtxTime)));
   }
 
+  /** One buffer, from the top: a song just opened. */
   load(buffer) {
-    this.stopNode();
-    this.buffer = buffer;
+    this.stopSources();
+    this.tracks = buffer ? [{ id: 'song', buffer, gain: 1, node: null, source: null }] : [];
     this.duration = buffer ? buffer.duration : 0;
     this.playing = false;
     this.startOffset = 0;
     this.notify();
   }
 
-  /** Swap in a new mix of the same song, keeping the playhead and play state. */
-  loadKeepingPlace(buffer) {
+  /** Nothing loaded at all. */
+  unload() { this.load(null); }
+
+  /**
+   * Swap in a new set of tracks for the same song — the stems arriving while
+   * the original was playing, say — keeping the playhead and play state.
+   * @param {Array<{id: string, buffer: AudioBuffer, gain?: number}>} tracks
+   */
+  setTracks(tracks) {
     const at = this.position;
     const wasPlaying = this.playing;
-    this.stopNode();
-    this.buffer = buffer;
-    this.duration = buffer.duration;
+    this.stopSources();
+    this.tracks = tracks.map(track => ({ id: track.id, buffer: track.buffer, gain: track.gain ?? 1, node: null, source: null }));
+    this.duration = this.tracks.reduce((max, track) => Math.max(max, track.buffer.duration), 0);
     this.startOffset = Math.min(at, this.duration);
     this.playing = false;
-    if (wasPlaying) this.play();
+    if (wasPlaying) this.startSources();
     else this.notify();
   }
 
+  /** A track's level, taking effect over a few milliseconds so it never clicks. */
+  setTrackGain(id, gain) {
+    const track = this.tracks.find(item => item.id === id);
+    if (!track) return;
+    track.gain = Math.max(0, gain);
+    if (track.node && this.ctx) {
+      const now = this.ctx.currentTime;
+      track.node.gain.cancelScheduledValues(now);
+      track.node.gain.setValueAtTime(track.node.gain.value, now);
+      track.node.gain.linearRampToValueAtTime(track.gain, now + 0.02);
+    }
+  }
+
+  /** Several at once; ids not named are left as they are. */
+  setGains(gains) {
+    Object.entries(gains).forEach(([id, gain]) => this.setTrackGain(id, gain));
+  }
+
   async play() {
-    if (!this.buffer || this.playing) return;
+    if (!this.loaded || this.playing) return;
     // The context is only ever made here, on a click, so the browser never
     // holds it suspended; and if it was, it is woken before anything starts.
     this.ensure();
     if (this.ctx.state === 'suspended') {
+      const generation = this.generation;
       try { await this.ctx.resume(); } catch { /* the start below will tell */ }
+      // Something else (a seek, a stop) happened while the context woke.
+      if (generation !== this.generation || this.playing) return;
     }
-    if (this.playing) return;
     if (this.startOffset >= this.duration - 0.01) this.startOffset = 0;
-    const node = this.ctx.createBufferSource();
-    node.buffer = this.buffer;
-    node.connect(this.gain);
-    node.onended = () => {
-      if (this.source !== node) return;
-      this.playing = false;
-      this.startOffset = this.duration;
-      this.notify();
-    };
-    node.start(0, this.startOffset);
-    this.source = node;
-    this.startedAtCtxTime = this.ctx.currentTime;
-    this.playing = true;
-    this.notify();
+    this.startSources();
   }
 
   pause() {
     if (!this.playing) return;
     this.startOffset = this.position;
-    this.stopNode();
+    this.stopSources();
     this.playing = false;
     this.notify();
   }
 
   stop() {
-    this.stopNode();
+    this.stopSources();
     this.playing = false;
     this.startOffset = 0;
     this.notify();
@@ -111,22 +134,69 @@ class Player {
   seek(seconds) {
     const clamped = Math.max(0, Math.min(this.duration, seconds));
     const wasPlaying = this.playing;
-    this.stopNode();
+    this.stopSources();
+    this.playing = false;
     this.startOffset = clamped;
-    if (wasPlaying) this.play();
+    if (wasPlaying && clamped < this.duration - 0.01) this.startSources();
     else this.notify();
   }
 
   setVolume(value) {
     this.volume = Math.max(0, Math.min(1, value));
-    if (this.gain) this.gain.gain.value = this.volume;
+    if (this.master && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.master.gain.cancelScheduledValues(now);
+      this.master.gain.setValueAtTime(this.master.gain.value, now);
+      this.master.gain.linearRampToValueAtTime(this.volume, now + 0.02);
+    }
   }
 
-  stopNode() {
-    if (!this.source) return;
-    try { this.source.onended = null; this.source.stop(); } catch { /* already stopped */ }
-    try { this.source.disconnect(); } catch { /* already gone */ }
-    this.source = null;
+  /** Start every track at the current offset, all on the same clock tick. */
+  startSources() {
+    this.ensure();
+    this.generation += 1;
+    const generation = this.generation;
+    // A hair in the future, so every source is scheduled before any begins.
+    const when = this.ctx.currentTime + 0.03;
+    const offset = this.startOffset;
+    let longest = null;
+    this.tracks.forEach(track => {
+      const node = this.ctx.createGain();
+      node.gain.value = track.gain;
+      node.connect(this.master);
+      const source = this.ctx.createBufferSource();
+      source.buffer = track.buffer;
+      source.connect(node);
+      if (offset < track.buffer.duration) source.start(when, offset);
+      track.node = node;
+      track.source = source;
+      if (!longest || track.buffer.duration > longest.buffer.duration) longest = track;
+    });
+    if (longest?.source) {
+      longest.source.onended = () => {
+        if (generation !== this.generation || !this.playing) return;
+        this.stopSources();
+        this.playing = false;
+        this.startOffset = this.duration;
+        this.notify();
+      };
+    }
+    this.startedAtCtxTime = when;
+    this.playing = true;
+    this.notify();
+  }
+
+  stopSources() {
+    this.generation += 1;
+    this.tracks.forEach(track => {
+      if (track.source) {
+        try { track.source.onended = null; track.source.stop(); } catch { /* never started or already stopped */ }
+        try { track.source.disconnect(); } catch { /* already gone */ }
+      }
+      if (track.node) { try { track.node.disconnect(); } catch { /* already gone */ } }
+      track.source = null;
+      track.node = null;
+    });
   }
 }
 
@@ -153,6 +223,18 @@ function mixStems(parts) {
     }
   });
   return [left, right];
+}
+
+/** An AudioBuffer from interleaved 16-bit stereo, as the stems are stored. */
+function bufferOfStem(samples, rate = RATE) {
+  const frames = Math.floor(samples.length / 2);
+  const left = new Float32Array(frames);
+  const right = new Float32Array(frames);
+  for (let i = 0; i < frames; i += 1) {
+    left[i] = samples[i * 2] / 32768;
+    right[i] = samples[i * 2 + 1] / 32768;
+  }
+  return toAudioBuffer(null, [left, right], rate);
 }
 
 /** Needs no AudioContext, so a mix can be built before the first click. */

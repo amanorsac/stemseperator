@@ -49,11 +49,19 @@ port.on('message', async ({ data }) => {
       send({ type: 'done', job: data.job, result: separator.status() });
       return;
     }
+    if (data.type === 'download-quick') {
+      await separator.downloadQuick(fraction => send({ type: 'progress', stage: 'download-quick', fraction }));
+      send({ type: 'done', job: data.job, result: separator.status() });
+      return;
+    }
     if (data.type === 'separate') {
       const left = new Float32Array(data.left);
       const right = new Float32Array(data.right);
-      const result = await separator.separate(left, right,
-        fraction => send({ type: 'progress', stage: 'separate', fraction }));
+      const quick = data.mode === 'quick';
+      const progress = fraction => send({ type: 'progress', stage: quick ? 'quick' : 'separate', fraction });
+      const result = quick
+        ? await separator.separateQuick(left, right, progress)
+        : await separator.separate(left, right, progress);
       send({ type: 'done', job: data.job, result });
       return;
     }

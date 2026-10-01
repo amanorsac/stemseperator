@@ -7,7 +7,7 @@ HT-Demucs (model weights, ONNX export)
   Meta AI Research; ONNX export by StemSplit. MIT License.
   https://github.com/facebookresearch/demucs
 
-UVR MDX-Net Karaoke 2 (model weights)
+UVR MDX-Net Karaoke 2 and UVR MDX-Net Inst Main (model weights)
   Ultimate Vocal Remover project. MIT License.
   https://github.com/Anjok07/ultimatevocalremovergui
 

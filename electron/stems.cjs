@@ -48,9 +48,22 @@ const KARAOKE_BYTES = 53 * 1024 * 1024;
 /** How UVR runs this particular model; the numbers come from its own model registry. */
 const KARAOKE_SPEC = { nFft: 5120, dimF: 2048, dimT: 8, compensate: 1.065 };
 
+/**
+ * The quick network: an MDX-Net instrumental model from Ultimate Vocal
+ * Remover. It only knows two things, the vocals and everything else, but it
+ * is a far smaller network than Demucs and gets through a song several
+ * times faster. Same shape as the karaoke model, so the same code runs it.
+ */
+const QUICK_FILE = 'UVR-MDX-NET-Inst_Main.onnx';
+const QUICK_URL = `https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/${QUICK_FILE}`;
+const QUICK_BYTES = 53 * 1024 * 1024;
+const QUICK_SPEC = { nFft: 5120, dimF: 2048, dimT: 8, compensate: 1.025 };
+/** What a quick separation produces. */
+const QUICK_STEMS = ['vocals', 'instrumental'];
+
 /** The two halves of the vocals stem, once split. */
 const VOCAL_PARTS = ['lead_vocals', 'backing_vocals'];
-const ALL_STEMS = [...STEMS, ...VOCAL_PARTS];
+const ALL_STEMS = [...STEMS, 'instrumental', ...VOCAL_PARTS];
 
 /**
  * The cross-fade applied to each piece: up over the first quarter, flat, down
@@ -145,6 +158,14 @@ class StemSeparator {
     return path.join(this.modelFolder, KARAOKE_FILE);
   }
 
+  get quickPath() {
+    return path.join(this.modelFolder, QUICK_FILE);
+  }
+
+  quickReady() {
+    try { return fs.statSync(this.quickPath).size > 40 * 1024 * 1024; } catch { return false; }
+  }
+
   modelReady() {
     try { return fs.statSync(this.modelPath).size > 100 * 1024 * 1024; } catch { return false; }
   }
@@ -161,9 +182,11 @@ class StemSeparator {
       modelBytes: MODEL_BYTES,
       karaokeReady: this.karaokeReady(),
       karaokeBytes: KARAOKE_BYTES,
+      quickReady: this.quickReady(),
+      quickBytes: QUICK_BYTES,
       busy: this.busy,
-      provider: this.provider,
       stems: STEMS,
+      quickStems: QUICK_STEMS,
       vocalParts: VOCAL_PARTS,
     };
   }
@@ -184,6 +207,11 @@ class StemSeparator {
   downloadKaraoke(onProgress) {
     if (this.karaokeReady()) return Promise.resolve(this.karaokePath);
     return this.fetchModel(KARAOKE_URL, this.karaokePath, KARAOKE_BYTES, onProgress);
+  }
+
+  downloadQuick(onProgress) {
+    if (this.quickReady()) return Promise.resolve(this.quickPath);
+    return this.fetchModel(QUICK_URL, this.quickPath, QUICK_BYTES, onProgress);
   }
 
   fetchModel(startUrl, target, expectedBytes, onProgress) {
@@ -246,6 +274,7 @@ class StemSeparator {
     if (wanted !== this.wantedProvider) {
       this.session = null;
       this.karaoke = null;
+      this.quick = null;
     }
     this.wantedProvider = wanted;
   }
@@ -287,7 +316,8 @@ class StemSeparator {
 
   /**
    * Where a recording's stems live, and which are there: `complete` once the
-   * six instruments are, `vocalsSplit` once the lead and backing are too.
+   * six instruments are, `quick` once the vocals and instrumental are, and
+   * `vocalsSplit` once the lead and backing are too.
    */
   cacheFor(id) {
     const folder = path.join(this.stemFolder, id);
@@ -296,8 +326,17 @@ class StemSeparator {
     return {
       folder, files,
       complete: STEMS.every(present),
+      quick: QUICK_STEMS.every(present),
       vocalsSplit: VOCAL_PARTS.every(present),
     };
+  }
+
+  /** The options the MDX networks are opened with. */
+  mdxOptions() {
+    // The runtime's memory arena and pattern planner fault on the second
+    // piece inside a utility process; without them these small networks
+    // run just as fast.
+    return { ...this.sessionOptions(), enableCpuMemArena: false, enableMemPattern: false };
   }
 
   cancel() {
@@ -314,7 +353,7 @@ class StemSeparator {
   async splitVocals(id, onProgress) {
     if (this.busy) throw new Error('A song is already being separated.');
     const cache = this.cacheFor(id);
-    if (!cache.complete) throw new Error('Separate the song before splitting its vocals.');
+    if (!cache.complete && !cache.quick) throw new Error('Separate the song before splitting its vocals.');
     if (cache.vocalsSplit) {
       onProgress?.(1);
       return { id, files: cache.files, cached: true };
@@ -323,7 +362,7 @@ class StemSeparator {
     this.cancelled = false;
     try {
       const { MdxModel } = require('./mdx.cjs');
-      this.karaoke ??= new MdxModel({ ...KARAOKE_SPEC, modelPath: this.karaokePath, sessionOptions: this.sessionOptions() });
+      this.karaoke ??= new MdxModel({ ...KARAOKE_SPEC, modelPath: this.karaokePath, sessionOptions: this.mdxOptions() });
       const { left, right } = decodeWav(await fsp.readFile(cache.files.vocals));
       const [backingL, backingR] = await this.karaoke.separate(
         left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled,
@@ -365,6 +404,44 @@ class StemSeparator {
   }
 
   /**
+   * The quick way: vocals and instrumental only, in a fraction of the time.
+   *
+   * The network returns the instrumental; the vocals are what is left when
+   * it is taken away from the song, so the two always add back up exactly.
+   */
+  async separateQuick(left, right, onProgress) {
+    if (this.busy) throw new Error('A song is already being separated.');
+    const id = fingerprint(left, right);
+    const cache = this.cacheFor(id);
+    if (cache.quick || cache.complete) {
+      onProgress?.(1);
+      return { id, files: cache.files, cached: true, mode: cache.quick ? 'quick' : 'full', provider: this.provider };
+    }
+    this.busy = true;
+    this.cancelled = false;
+    try {
+      const { MdxModel } = require('./mdx.cjs');
+      this.quick ??= new MdxModel({ ...QUICK_SPEC, modelPath: this.quickPath, sessionOptions: this.mdxOptions() });
+      const [instL, instR] = await this.quick.separate(
+        left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled,
+      );
+      const vocL = new Float32Array(left.length);
+      const vocR = new Float32Array(right.length);
+      for (let i = 0; i < left.length; i += 1) {
+        vocL[i] = left[i] - instL[i];
+        vocR[i] = right[i] - instR[i];
+      }
+      await fsp.mkdir(cache.folder, { recursive: true });
+      await fsp.writeFile(cache.files.instrumental, encodeWav(instL, instR));
+      await fsp.writeFile(cache.files.vocals, encodeWav(vocL, vocR));
+      onProgress?.(1);
+      return { id, files: cache.files, cached: false, mode: 'quick', provider: this.provider };
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /**
    * Separate a stereo recording at 44.1 kHz into its six stems.
    *
    * Resolves with the path of each stem's file. Progress runs 0 to 1.
@@ -375,7 +452,7 @@ class StemSeparator {
     const cache = this.cacheFor(id);
     if (cache.complete) {
       onProgress?.(1);
-      return { id, files: cache.files, cached: true, provider: this.provider };
+      return { id, files: cache.files, cached: true, mode: 'full', provider: this.provider };
     }
 
     this.busy = true;
@@ -432,7 +509,7 @@ class StemSeparator {
         await fsp.writeFile(cache.files[STEMS[stem]], encodeWav(out[stem][0], out[stem][1]));
       }
       onProgress?.(1);
-      return { id, files: cache.files, cached: false, provider: this.provider };
+      return { id, files: cache.files, cached: false, mode: 'full', provider: this.provider };
     } finally {
       this.busy = false;
     }
@@ -440,6 +517,6 @@ class StemSeparator {
 }
 
 module.exports = {
-  StemSeparator, STEMS, VOCAL_PARTS, ALL_STEMS, SAMPLE_RATE, SEGMENT, OVERLAP, STRIDE,
+  StemSeparator, STEMS, QUICK_STEMS, VOCAL_PARTS, ALL_STEMS, SAMPLE_RATE, SEGMENT, OVERLAP, STRIDE,
   makeWindow, chunkCount, encodeWav, decodeWav, fingerprint,
 };

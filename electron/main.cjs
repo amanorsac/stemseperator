@@ -10,7 +10,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, utilityProcess } = require('electron');
 const fs = require('fs/promises');
 const path = require('path');
-const { StemSeparator, STEMS, ALL_STEMS } = require('./stems.cjs');
+const { StemSeparator, STEMS, QUICK_STEMS, ALL_STEMS } = require('./stems.cjs');
 
 let mainWindow;
 let stemWorker = null;
@@ -148,13 +148,17 @@ app.whenReady().then(() => {
     await askStemWorker({ type: 'download' });
     return true;
   });
-  ipcMain.handle('stems:separate', async (_event, left, right) => {
+  ipcMain.handle('stems:separate', async (_event, left, right, mode) => {
     if (!(left instanceof ArrayBuffer) || !(right instanceof ArrayBuffer) || left.byteLength !== right.byteLength) {
       throw new Error('Separation needs two channels of the same length.');
     }
     if (stemJobs.size) throw new Error('A song is already being separated.');
-    const result = await askStemWorker({ type: 'separate', left, right });
-    return { id: result.id, cached: result.cached, stems: STEMS };
+    const result = await askStemWorker({ type: 'separate', left, right, mode: mode === 'quick' ? 'quick' : 'full' });
+    return { id: result.id, cached: result.cached, mode: result.mode, stems: result.mode === 'quick' ? QUICK_STEMS : STEMS };
+  });
+  ipcMain.handle('stems:download-quick', async () => {
+    await askStemWorker({ type: 'download-quick' });
+    return true;
   });
   ipcMain.handle('stems:cancel', async () => { stemWorker?.postMessage({ type: 'cancel' }); });
   ipcMain.handle('stems:download-karaoke', async () => {
@@ -172,7 +176,7 @@ app.whenReady().then(() => {
   ipcMain.handle('stems:cached', async (_event, id) => {
     if (!/^[0-9a-f]{20}$/.test(String(id))) throw new Error('No such song.');
     const cache = stemFiles.cacheFor(id);
-    return { complete: cache.complete, vocalsSplit: cache.vocalsSplit };
+    return { complete: cache.complete, quick: cache.quick, vocalsSplit: cache.vocalsSplit };
   });
   ipcMain.handle('stems:clear-cache', async () => {
     if (stemJobs.size) throw new Error('Wait for the current separation to finish first.');

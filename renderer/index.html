@@ -70,6 +70,18 @@
             <h2>Drop a song here</h2>
             <p>MP3, WAV, M4A, FLAC or a video. It's split into its instruments the moment it lands.</p>
             <button class="primary" id="choose-file"><span data-icon="folder-open"></span>Open a song</button>
+            <div class="mode-picker" id="mode-picker" role="radiogroup" aria-label="How to separate">
+              <button data-mode="quick" role="radio" aria-checked="false">
+                <span class="mode-icon" data-icon="zap"></span>
+                <b>Quick</b>
+                <small>Vocals + instrumental. Several times faster.</small>
+              </button>
+              <button data-mode="full" role="radio" aria-checked="true">
+                <span class="mode-icon" data-icon="layers"></span>
+                <b>Full</b>
+                <small>Drums, bass, guitar, keys, vocals, aux.</small>
+              </button>
+            </div>
             <div id="intro-error" class="banner error" hidden></div>
           </div>
           <div id="library" class="library" hidden>
@@ -211,6 +223,10 @@
         <div class="card settings-card">
           <h3>Separation</h3>
           <div class="setting">
+            <div><b id="lbl-mode">Mode</b><small>Quick finds the vocals and leaves everything else as one instrumental, several times faster. Full pulls out drums, bass, guitar, keys, vocals and aux.</small></div>
+            <div class="dropdown" id="settings-mode" data-options='[["quick","Quick"],["full","Full"]]' aria-labelledby="lbl-mode"></div>
+          </div>
+          <div class="setting">
             <div><b>Split vocals into lead and backing</b><small>Runs a second, karaoke-trained model over the vocals. Roughly doubles the time; switch it off when you only need the instruments.</small></div>
             <button class="switch on" id="settings-split" role="switch" aria-checked="true"></button>
           </div>
@@ -225,6 +241,10 @@
           <div class="setting">
             <div><b>HT-Demucs (6 stems)</b><small>Meta's separation network. About 136 MB, downloaded once.</small></div>
             <div class="setting-ctl"><span class="status" id="model-demucs-status">—</span><button class="ghost small" id="model-demucs-get">Download</button></div>
+          </div>
+          <div class="setting">
+            <div><b>UVR MDX-Net Inst Main (quick)</b><small>The vocals/instrumental model from Ultimate Vocal Remover, for Quick mode. About 53 MB.</small></div>
+            <div class="setting-ctl"><span class="status" id="model-quick-status">—</span><button class="ghost small" id="model-quick-get">Download</button></div>
           </div>
           <div class="setting">
             <div><b>UVR MDX-Net Karaoke 2</b><small>The lead-vocal model from Ultimate Vocal Remover. About 53 MB.</small></div>
@@ -285,7 +305,7 @@
             <summary>Third-party and open-source notices</summary>
             <ul>
               <li><b>HT-Demucs</b> — Meta AI Research; ONNX export by StemSplit. MIT.</li>
-              <li><b>UVR MDX-Net Karaoke 2</b> — Ultimate Vocal Remover project. MIT.</li>
+              <li><b>UVR MDX-Net Karaoke 2</b> and <b>Inst Main</b> — Ultimate Vocal Remover project. MIT.</li>
               <li><b>ONNX Runtime</b> — Microsoft. MIT.</li>
               <li><b>Electron</b> — OpenJS Foundation. MIT.</li>
               <li><b>Lucide</b> icons — ISC.</li>
@@ -296,15 +316,17 @@
 
         <div class="card help-card">
           <h3>How it works</h3>
-          <p>Open a song and it's fed through HT-Demucs, Meta's separation network, which pulls out drums, bass, guitar, keys, vocals and everything else. The vocals then go through a second model, trained for karaoke, which lifts the lead singer off the backing vocals. Everything runs on your own computer; no audio ever leaves it.</p>
+          <p>Open a song and it's fed through a separation network. In <b>Full</b> mode that's HT-Demucs, Meta's network, which pulls out drums, bass, guitar, keys, vocals and everything else. In <b>Quick</b> mode it's a much smaller MDX-Net model that finds the vocals and leaves everything else as one instrumental, several times faster. Either way the vocals can then go through a third model, trained for karaoke, which lifts the lead singer off the backing vocals. Everything runs on your own computer; no audio ever leaves it.</p>
+          <h3>Quick or Full?</h3>
+          <p>Pick on the drop card, or in Settings. <b>Quick</b> when you need a vocal, an instrumental, or a lead-vocal-free mix in a hurry. <b>Full</b> when you want the band taken apart. A song separated the full way already has everything Quick would give you, so it opens that way whatever is picked.</p>
           <h3>What to expect</h3>
-          <p>The first run downloads the models (about 190 MB in total). Separating takes a few minutes per song on the processor — a progress bar shows where it's at, and the window stays usable. A song you've split before opens instantly from the library.</p>
+          <p>The first run downloads the models (about 136 MB for Full, 53 MB for Quick, 53 MB for the vocal split; once each). Full separation takes a few minutes per song on the processor, Quick a fraction of that — a progress bar shows where it's at, and the song plays while it works. A song you've split before opens instantly from the library.</p>
           <h3>Getting just one part, or everything but one</h3>
           <p>Every stem has a switch. Turn off the ones you don't want and export as <b>one mix</b> to get, say, an instrumental with no lead vocal. Solo a stem and export to get it alone. Or export the <b>selected stems</b> as separate files for your DAW.</p>
           <h3>When the split isn't clean</h3>
           <p>Separation is a best guess, not a master recording. Heavily layered vocals, distorted guitars and dense synths can bleed between stems — that's the state of the art, not a fault. Pads, organs and synths often land in Aux rather than Keys.</p>
           <h3>Credits</h3>
-          <p>HT-Demucs by Meta AI Research (MIT). UVR MDX-Net Karaoke model from the Ultimate Vocal Remover project (MIT). Icons by Lucide (ISC). Built by Amanorsac Studio.</p>
+          <p>HT-Demucs by Meta AI Research (MIT). UVR MDX-Net Karaoke and Inst Main models from the Ultimate Vocal Remover project (MIT). Icons by Lucide (ISC). Built by Amanorsac Studio.</p>
         </div>
       </section>
     </main>
