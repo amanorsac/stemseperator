@@ -150,7 +150,7 @@ svg{display:block}
 .transport{display:flex;align-items:center;gap:14px;margin-top:18px}
 .transport-btn{width:50px;height:50px;border-radius:50%;background:var(--panel);border:1px solid var(--line-2);display:grid;place-items:center;color:#e2e8f3;transition:background .15s}
 .transport-btn:hover{background:var(--panel-2)}
-.transport-btn svg{width:20px;height:20px}
+.transport-btn svg{width:20px;height:20px;pointer-events:none}
 .transport-btn.play{width:60px;height:60px;background:linear-gradient(135deg,#1a7dff,#2f93ff);border:0;box-shadow:0 10px 26px var(--blue-glow)}
 .transport-btn.play svg{width:26px;height:26px;fill:#fff;stroke:#fff}
 .time{font-size:14px;color:#c8d2e6;font-family:var(--mono);font-variant-numeric:tabular-nums;min-width:108px;margin-left:6px}

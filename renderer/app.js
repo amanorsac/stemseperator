@@ -825,10 +825,27 @@ async function renderSettings() {
  * Transport
  * ------------------------------------------------------------------ */
 
-function renderTransport() {
+/**
+ * The play buttons' icons are only touched when the state actually changes.
+ * Rebuilding them on every tick swapped the element under the pointer
+ * between press and release, and a click whose press and release land on
+ * different elements is no click at all — the button felt like it was
+ * ignoring every other press.
+ */
+let shownPlaying = null;
+function renderPlayButtons() {
+  if (shownPlaying === player.playing) return;
+  shownPlaying = player.playing;
+  const label = player.playing ? 'Pause' : 'Play';
   const playBtn = el('play-pause');
   playBtn.innerHTML = icon(player.playing ? 'pause' : 'play', 26);
-  playBtn.setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
+  playBtn.setAttribute('aria-label', label);
+  el('mini-play').innerHTML = icon(player.playing ? 'pause' : 'play', 20);
+  el('mini-play').setAttribute('aria-label', label);
+}
+
+function renderTransport() {
+  renderPlayButtons();
   const seek = el('seek');
   seek.max = String(player.duration || 1);
   const position = Math.min(player.position, player.duration);
@@ -839,8 +856,6 @@ function renderTransport() {
   el('song-time-top').textContent = text;
   el('playhead').style.left = `${player.duration ? position / player.duration * 100 : 0}%`;
   // The compact bar mirrors the card.
-  el('mini-play').innerHTML = icon(player.playing ? 'pause' : 'play', 20);
-  el('mini-play').setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
   el('mini-time').textContent = text;
   const miniSeek = el('mini-seek');
   miniSeek.max = String(player.duration || 1);
@@ -849,7 +864,12 @@ function renderTransport() {
   el('mini-name').textContent = state.song?.name || '';
 }
 player.subscribe(renderTransport);
-setInterval(() => { if (state.song) renderTransport(); }, 100);
+// The playhead moves on the display's own clock while the song plays, and
+// not at all while it doesn't.
+(function tick() {
+  if (state.song && player.playing) renderTransport();
+  requestAnimationFrame(tick);
+})();
 
 /* ------------------------------------------------------------------ *
  * Wiring
