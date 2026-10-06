@@ -374,13 +374,16 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(-
 
 /* Quick or Full, on the drop card */
 .mode-picker{display:grid;grid-template-columns:repeat(2,minmax(0,220px));gap:12px;margin-top:6px;justify-content:center}
-.hd-switch{display:flex;align-items:center;gap:12px;margin-top:10px;padding:8px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel);cursor:pointer}
-.hd-switch:hover{background:var(--panel-2)}
-.hd-switch>span{display:flex;align-items:center;gap:8px;text-align:left}
+.mode-row{display:flex;gap:12px;justify-content:center;align-items:stretch;margin-top:6px;flex-wrap:wrap}
+.mode-row .mode-picker{margin-top:0}
+.hd-switch{display:flex;flex-direction:column;gap:4px;width:200px;padding:14px 16px;border-radius:14px;border:1px solid var(--line-2);background:var(--panel);cursor:pointer;text-align:left}
+.hd-switch:hover{border-color:rgba(47,214,106,.5)}
+.hd-head{display:flex;align-items:center;gap:8px}
+.hd-head .switch{margin-left:auto;transform:scale(.85);transform-origin:right center}
 .hd-switch b{font-size:14px}
-.hd-switch small{color:var(--muted);font-size:12px;margin-left:6px}
-.hd-badge{color:#6fe69a}.hd-badge svg{width:16px;height:16px}
-.hd-switch.on{border-color:rgba(47,214,106,.45);background:rgba(47,214,106,.08)}
+.hd-switch small{color:var(--muted);font-size:12px;line-height:1.35}
+.hd-badge{color:#6fe69a}.hd-badge svg{width:18px;height:18px}
+.hd-switch.on{border-color:rgba(47,214,106,.55);background:rgba(47,214,106,.1);box-shadow:0 0 0 1px rgba(47,214,106,.3) inset}
 .mode-picker button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;padding:14px 16px;border-radius:14px;border:1px solid var(--line-2);background:var(--panel);color:var(--text);transition:border-color .15s,background .15s}
 .mode-picker button:hover{border-color:rgba(26,125,255,.5)}
 .mode-picker button.active{border-color:var(--blue-2);background:rgba(26,125,255,.14);box-shadow:0 0 0 1px rgba(26,125,255,.35) inset}
@@ -418,6 +421,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(-
   .drop-zone p{display:none}
   .drop-zone{gap:8px;padding:12px}
   .mode-picker{grid-template-columns:repeat(2,minmax(0,200px));gap:10px}
+  .hd-switch{padding:8px 12px;width:170px;justify-content:center}
   .hd-switch small{display:none}
   .mode-picker button{padding:8px 12px;gap:2px}
   .mode-picker small{display:none}

@@ -81,6 +81,7 @@
             <h2>Drop a song here</h2>
             <p>MP3, WAV, M4A, FLAC or a video. It's split into its instruments the moment it lands.</p>
             <button class="primary" id="choose-file"><span data-icon="folder-open"></span>Open a song</button>
+            <div class="mode-row">
             <div class="mode-picker" id="mode-picker" role="radiogroup" aria-label="How to separate">
               <button data-mode="quick" role="radio" aria-checked="false">
                 <span class="mode-icon" data-icon="zap"></span>
@@ -94,9 +95,10 @@
               </button>
             </div>
             <label class="hd-switch" id="hd-switch-wrap" title="The RoFormer networks: the cleanest split there is, several times slower unless the graphics card is on">
-              <button class="switch" id="hd-switch" role="switch" aria-checked="false" aria-labelledby="hd-switch-label"></button>
-              <span id="hd-switch-label"><span class="hd-badge" data-icon="sparkles"></span><b>HD quality</b><small id="hd-switch-sub">RoFormer models. Cleanest, slower.</small></span>
+              <span class="hd-head"><span class="hd-badge" data-icon="sparkles"></span><b>HD quality</b><button class="switch" id="hd-switch" role="switch" aria-checked="false" aria-label="HD quality"></button></span>
+              <small id="hd-switch-sub">RoFormer models. Cleanest split, slower.</small>
             </label>
+            </div>
             <div id="intro-error" class="banner error" hidden></div>
           </div>
           <div id="library" class="library" hidden>
