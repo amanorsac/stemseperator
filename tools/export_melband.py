@@ -90,7 +90,9 @@ def main():
     t0 = time.time()
     torch.onnx.export(w, (sr, si), a.out, input_names=['spec_real', 'spec_imag'], output_names=['out_spec_real', 'out_spec_imag'], opset_version=18, dynamo=True, external_data=False)
     print('exported in %.0f s' % (time.time() - t0), Path(a.out).stat().st_size // 1048576, 'MB')
-    np.savez(a.out + '.ref.npz', input_audio=audio.numpy(), spec_real=sr.numpy(), spec_imag=si.numpy(), out_spec_real=wr.numpy(), out_spec_imag=wi.numpy(), ref_audio=rec.numpy())
+    # Raw floats for the Node parity check (tools/parity_melband.cjs).
+    audio.numpy().astype('float32').tofile(a.out + '.input_audio.f32')
+    rec.numpy().astype('float32').tofile(a.out + '.ref_audio.f32')
     meta = dict(n_fft=n_fft, hop=hop, samples=a.samples, stems=int(wr.shape[1]), frames=int(sr.shape[3]))
     json.dump(meta, open(a.out + '.json', 'w')); print(meta)
 
