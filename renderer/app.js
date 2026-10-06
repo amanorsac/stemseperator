@@ -296,7 +296,12 @@ async function ensureModels({ demucs = false, karaoke = false, quick = false }) 
  * into six instruments — splitting its vocals when asked to. Resolves with
  * the song's fingerprint, how it was separated and whether the split happened.
  */
-async function separateBuffer(buffer, onProgress, mode = settings.mode) {
+/**
+ * `onFirstPass(id, mode)` is awaited as soon as the instruments are on disk,
+ * before the vocal split starts, so a caller can put the stems up and let
+ * them play while the second pass runs.
+ */
+async function separateBuffer(buffer, onProgress, mode = settings.mode, onFirstPass = null) {
   progressSink = onProgress;
   try {
     const quick = mode === 'quick';
@@ -317,6 +322,7 @@ async function separateBuffer(buffer, onProgress, mode = settings.mode) {
     }
     // A song already separated the full way is opened that way, whatever was asked.
     mode = result.mode === 'quick' ? 'quick' : 'full';
+    if (onFirstPass) await onFirstPass(result.id, mode);
     let split = false;
     if (settings.splitVocals) {
       try {
@@ -344,16 +350,28 @@ async function separateCurrent() {
   }
   setWorking({ label: 'Getting ready…', sub: '', progress: 0, cancellable: true });
   try {
+    // The instruments go up as soon as they exist; the vocals arrive as one
+    // stem and are split in place when the second pass lands.
+    let shown = false;
+    const firstPass = async (id, mode) => {
+      if (state.song !== song) return;
+      song.songId = id;
+      song.mode = mode;
+      setWorking({ label: 'Opening the stems…', sub: '', progress: 1, cancellable: false });
+      await loadStems(id, false, mode);
+      shown = true;
+      if (settings.splitVocals) toast('Stems are ready to play. Lead and backing vocals are being split in the background.');
+    };
     const { id, split, mode } = await separateBuffer(song.buffer, ({ stage, fraction, label, sub }) => {
       if (state.song !== song) return;
       setWorking({ label, sub, progress: fraction, cancellable: ['separate', 'quick', 'split'].includes(stage) });
-    }, song.mode);
+    }, song.mode, firstPass);
     if (state.song !== song) return;
     song.songId = id;
     song.split = split;
     song.mode = mode;
-    setWorking({ label: 'Opening the stems…', sub: '', progress: 1, cancellable: false });
-    await loadStems(id, split, mode);
+    if (split) await swapInVocalParts(id);
+    else if (!shown) await loadStems(id, false, mode);
     if (state.song !== song) return;
     setWorking(null);
     void bridge.librarySave?.({ id, name: song.name, duration: song.duration, split, mode }).then(() => refreshLibrary());
@@ -379,6 +397,29 @@ async function loadStems(id, split, mode) {
   state.audition = null;
   // The original song has done its job; the stems are what plays now.
   if (state.song) state.song.buffer = null;
+  buildStems();
+  remix(true);
+}
+
+/** One stem read from the cache into the mixer's shape. */
+async function readStem(id, key, { on = true, gain = 0 } = {}) {
+  const bytes = await bridge.stemRead(id, key);
+  const { left, right, peaks, songPeaks } = await audioJob('decode', { bytes, waveBuckets: WAVE_BUCKETS, songBuckets: SONG_BUCKETS }, [bytes]);
+  return { key, ...STEM_DEFS[key], on, gain, buffer: toAudioBuffer([left, right]), peaks, songPeaks };
+}
+
+/**
+ * The vocals row becomes Lead Vocals and Backing Vocals, in place, with the
+ * switch and level it had; the song keeps playing from where it is.
+ */
+async function swapInVocalParts(id) {
+  const at = state.stems.findIndex(stem => stem.key === 'vocals');
+  if (at < 0) { await loadStems(id, true, state.song?.mode); return; }
+  const vocals = state.stems[at];
+  const parts = await Promise.all(['lead_vocals', 'backing_vocals'].map(key => readStem(id, key, { on: vocals.on, gain: vocals.gain })));
+  if (state.stems[at] !== vocals) return; // the song changed under us
+  state.stems.splice(at, 1, ...parts);
+  if (state.audition === 'vocals') state.audition = 'lead_vocals';
   buildStems();
   remix(true);
 }
