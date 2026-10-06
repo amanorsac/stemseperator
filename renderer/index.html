@@ -92,6 +92,11 @@
                 <b>Full</b>
                 <small>Drums, bass, guitar, keys, vocals, aux.</small>
               </button>
+              <button data-mode="hd" role="radio" aria-checked="false">
+                <span class="mode-icon" data-icon="sparkles"></span>
+                <b>HD</b>
+                <small>The same six, cleanest. Slow without a graphics card.</small>
+              </button>
             </div>
             <div id="intro-error" class="banner error" hidden></div>
           </div>
@@ -253,8 +258,8 @@
         <div class="card settings-card">
           <h3>Separation</h3>
           <div class="setting">
-            <div><b id="lbl-mode">Mode</b><small>Quick finds the vocals and leaves everything else as one instrumental, several times faster. Full pulls out drums, bass, guitar, keys, vocals and aux.</small></div>
-            <div class="dropdown" id="settings-mode" data-options='[["quick","Quick"],["full","Full"]]' aria-labelledby="lbl-mode"></div>
+            <div><b id="lbl-mode">Mode</b><small>Quick finds the vocals and leaves everything else as one instrumental, several times faster. Full pulls out drums, bass, guitar, keys, vocals and aux. HD does the same six with the BS-RoFormer network: markedly cleaner, and several times slower unless the graphics card is on.</small></div>
+            <div class="dropdown" id="settings-mode" data-options='[["quick","Quick"],["full","Full"],["hd","HD"]]' aria-labelledby="lbl-mode"></div>
           </div>
           <div class="setting">
             <div><b>Split vocals into lead and backing</b><small>Runs a second, karaoke-trained model over the vocals. Roughly doubles the time; switch it off when you only need the instruments.</small></div>
@@ -271,6 +276,10 @@
           <div class="setting">
             <div><b>HT-Demucs (6 stems)</b><small>Meta's separation network. About 136 MB, downloaded once.</small></div>
             <div class="setting-ctl"><span class="status" id="model-demucs-status">—</span><button class="ghost small" id="model-demucs-get">Download</button></div>
+          </div>
+          <div class="setting">
+            <div><b>BS-RoFormer SW (HD, 6 stems)</b><small>The band-split transformer that leads the open leaderboards. About 353 MB.</small></div>
+            <div class="setting-ctl"><span class="status" id="model-hd-status">—</span><button class="ghost small" id="model-hd-get">Download</button></div>
           </div>
           <div class="setting">
             <div><b>UVR MDX-Net Inst Main (quick)</b><small>The vocals/instrumental model from Ultimate Vocal Remover, for Quick mode. About 53 MB.</small></div>
@@ -337,6 +346,7 @@
             <ul>
               <li><b>HT-Demucs</b> — Meta AI Research; ONNX export by StemSplit. MIT.</li>
               <li><b>UVR MDX-Net Karaoke 2</b> and <b>Inst Main</b> — Ultimate Vocal Remover project. MIT.</li>
+              <li><b>BS-RoFormer SW</b> — ByteDance's BS-RoFormer architecture, weights by the MVSep team (jarredou/BS-ROFO-SW-Fixed), ONNX export by elicwhite. MIT.</li>
               <li><b>ONNX Runtime</b> — Microsoft. MIT.</li>
               <li><b>Electron</b> — OpenJS Foundation. MIT.</li>
               <li><b>Lucide</b> icons — ISC.</li>

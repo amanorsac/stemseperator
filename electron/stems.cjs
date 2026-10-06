@@ -64,9 +64,23 @@ const QUICK_SPEC = { nFft: 5120, dimF: 2048, dimT: 8, compensate: 1.025 };
 /** What a quick separation produces. */
 const QUICK_STEMS = ['vocals', 'instrumental'];
 
+/**
+ * The HD network: BS-RoFormer SW, the band-split transformer at the top of
+ * the open leaderboards, in its six-stem form. The same six instruments as
+ * Demucs, markedly cleaner, at several times the cost. ONNX export of
+ * jarredou/BS-ROFO-SW-Fixed; MIT like the rest.
+ */
+const HD_FILE = 'bs_roformer_sw_6stem_fp16.onnx';
+const HD_URL = `https://huggingface.co/elicwhite/bs-roformer-sw-6stem-onnx/resolve/main/${HD_FILE}`;
+const HD_BYTES = 353 * 1024 * 1024;
+/** The order the RoFormer returns its stems in, to the names used here. */
+const HD_ORDER = ['bass', 'drums', 'other', 'vocals', 'guitar', 'piano'];
+
 /** The two halves of the vocals stem, once split. */
 const VOCAL_PARTS = ['lead_vocals', 'backing_vocals'];
 const ALL_STEMS = [...STEMS, 'instrumental', ...VOCAL_PARTS];
+/** Where a song's stems live: beside each other for Fast and Quick, under hd/ for HD. */
+const TIERS = ['standard', 'hd'];
 
 /**
  * The cross-fade applied to each piece: up over the first quarter, flat, down
@@ -165,6 +179,14 @@ class StemSeparator {
     return path.join(this.modelFolder, QUICK_FILE);
   }
 
+  get hdPath() {
+    return path.join(this.modelFolder, HD_FILE);
+  }
+
+  hdReady() {
+    try { return fs.statSync(this.hdPath).size > 300 * 1024 * 1024; } catch { return false; }
+  }
+
   quickReady() {
     try { return fs.statSync(this.quickPath).size > 40 * 1024 * 1024; } catch { return false; }
   }
@@ -187,6 +209,8 @@ class StemSeparator {
       karaokeBytes: KARAOKE_BYTES,
       quickReady: this.quickReady(),
       quickBytes: QUICK_BYTES,
+      hdReady: this.hdReady(),
+      hdBytes: HD_BYTES,
       busy: this.busy,
       stems: STEMS,
       quickStems: QUICK_STEMS,
@@ -215,6 +239,11 @@ class StemSeparator {
   downloadQuick(onProgress) {
     if (this.quickReady()) return Promise.resolve(this.quickPath);
     return this.fetchModel(QUICK_URL, this.quickPath, QUICK_BYTES, onProgress);
+  }
+
+  downloadHd(onProgress) {
+    if (this.hdReady()) return Promise.resolve(this.hdPath);
+    return this.fetchModel(HD_URL, this.hdPath, HD_BYTES, onProgress);
   }
 
   fetchModel(startUrl, target, expectedBytes, onProgress) {
@@ -278,6 +307,7 @@ class StemSeparator {
       this.session = null;
       this.karaoke = null;
       this.quick = null;
+      this.hd = null;
     }
     this.wantedProvider = wanted;
   }
@@ -322,15 +352,25 @@ class StemSeparator {
    * six instruments are, `quick` once the vocals and instrumental are, and
    * `vocalsSplit` once the lead and backing are too.
    */
-  cacheFor(id) {
-    const folder = path.join(this.stemFolder, id);
+  cacheFor(id, tier = 'standard') {
+    const folder = tier === 'hd' ? path.join(this.stemFolder, id, 'hd') : path.join(this.stemFolder, id);
     const files = Object.fromEntries(ALL_STEMS.map(stem => [stem, path.join(folder, `${stem}.wav`)]));
     const present = stem => { try { return fs.statSync(files[stem]).size > 44; } catch { return false; } };
     return {
-      folder, files,
+      folder, files, tier,
       complete: STEMS.every(present),
-      quick: QUICK_STEMS.every(present),
+      quick: tier === 'standard' && QUICK_STEMS.every(present),
       vocalsSplit: VOCAL_PARTS.every(present),
+    };
+  }
+
+  /** Everything known about a song's cache, both tiers. */
+  cacheSummary(id) {
+    const standard = this.cacheFor(id, 'standard');
+    const hd = this.cacheFor(id, 'hd');
+    return {
+      complete: standard.complete, quick: standard.quick, vocalsSplit: standard.vocalsSplit,
+      hd: hd.complete, hdVocalsSplit: hd.vocalsSplit,
     };
   }
 
@@ -353,9 +393,9 @@ class StemSeparator {
    * stem alone, that is the backing vocals; the lead is what is left when they
    * are taken away, so the two always add back up to the vocals exactly.
    */
-  async splitVocals(id, onProgress) {
+  async splitVocals(id, onProgress, tier = 'standard') {
     if (this.busy) throw new Error('A song is already being separated.');
-    const cache = this.cacheFor(id);
+    const cache = this.cacheFor(id, tier);
     if (!cache.complete && !cache.quick) throw new Error('Separate the song before splitting its vocals.');
     if (cache.vocalsSplit) {
       onProgress?.(1);
@@ -404,6 +444,35 @@ class StemSeparator {
     };
     await walk(this.stemFolder);
     return total;
+  }
+
+  /**
+   * The HD way: the six instruments through BS-RoFormer. Slow on a processor,
+   * quick on a graphics card, and the cleanest split the app can make.
+   */
+  async separateHd(left, right, onProgress) {
+    if (this.busy) throw new Error('A song is already being separated.');
+    const id = fingerprint(left, right);
+    const cache = this.cacheFor(id, 'hd');
+    if (cache.complete) {
+      onProgress?.(1);
+      return { id, files: cache.files, cached: true, mode: 'hd', provider: this.provider };
+    }
+    this.busy = true;
+    this.cancelled = false;
+    try {
+      const { RoformerModel } = require('./roformer.cjs');
+      this.hd ??= new RoformerModel({ modelPath: this.hdPath, sessionOptions: this.mdxOptions() });
+      const stems = await this.hd.separate(left, right, fraction => onProgress?.(fraction * 0.98), () => this.cancelled);
+      await fsp.mkdir(cache.folder, { recursive: true });
+      for (let i = 0; i < HD_ORDER.length; i += 1) {
+        await fsp.writeFile(cache.files[HD_ORDER[i]], encodeWav(stems[i][0], stems[i][1]));
+      }
+      onProgress?.(1);
+      return { id, files: cache.files, cached: false, mode: 'hd', provider: this.provider };
+    } finally {
+      this.busy = false;
+    }
   }
 
   /**
@@ -520,6 +589,6 @@ class StemSeparator {
 }
 
 module.exports = {
-  StemSeparator, STEMS, QUICK_STEMS, VOCAL_PARTS, ALL_STEMS, SAMPLE_RATE, SEGMENT, OVERLAP, STRIDE,
+  StemSeparator, STEMS, QUICK_STEMS, VOCAL_PARTS, ALL_STEMS, TIERS, SAMPLE_RATE, SEGMENT, OVERLAP, STRIDE,
   makeWindow, chunkCount, encodeWav, decodeWav, fingerprint,
 };

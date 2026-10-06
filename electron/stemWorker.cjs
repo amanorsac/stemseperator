@@ -49,6 +49,11 @@ port.on('message', async ({ data }) => {
       send({ type: 'done', job: data.job, result: separator.status() });
       return;
     }
+    if (data.type === 'download-hd') {
+      await separator.downloadHd(fraction => send({ type: 'progress', stage: 'download-hd', fraction }));
+      send({ type: 'done', job: data.job, result: separator.status() });
+      return;
+    }
     if (data.type === 'download-quick') {
       await separator.downloadQuick(fraction => send({ type: 'progress', stage: 'download-quick', fraction }));
       send({ type: 'done', job: data.job, result: separator.status() });
@@ -57,17 +62,17 @@ port.on('message', async ({ data }) => {
     if (data.type === 'separate') {
       const left = new Float32Array(data.left);
       const right = new Float32Array(data.right);
-      const quick = data.mode === 'quick';
-      const progress = fraction => send({ type: 'progress', stage: quick ? 'quick' : 'separate', fraction });
-      const result = quick
-        ? await separator.separateQuick(left, right, progress)
-        : await separator.separate(left, right, progress);
+      const mode = data.mode === 'quick' ? 'quick' : data.mode === 'hd' ? 'hd' : 'full';
+      const progress = fraction => send({ type: 'progress', stage: mode === 'full' ? 'separate' : mode, fraction });
+      const result = mode === 'quick' ? await separator.separateQuick(left, right, progress)
+        : mode === 'hd' ? await separator.separateHd(left, right, progress)
+          : await separator.separate(left, right, progress);
       send({ type: 'done', job: data.job, result });
       return;
     }
     if (data.type === 'split-vocals') {
       const result = await separator.splitVocals(data.id,
-        fraction => send({ type: 'progress', stage: 'split', fraction }));
+        fraction => send({ type: 'progress', stage: 'split', fraction }), data.tier === 'hd' ? 'hd' : 'standard');
       send({ type: 'done', job: data.job, result });
       return;
     }

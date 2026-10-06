@@ -191,12 +191,16 @@ app.whenReady().then(() => {
     // trial's) is never charged; a new one needs room on the trial or a key.
     await licenseReady;
     const id = fingerprint(new Float32Array(left), new Float32Array(right));
-    const cache = stemFiles.cacheFor(id);
+    const cache = stemFiles.cacheFor(id, mode === 'hd' ? 'hd' : 'standard');
     const alreadyDone = mode === 'quick' ? (cache.quick || cache.complete) : cache.complete;
     if (!alreadyDone && !license.canSeparate(id)) throw new Error('TRIAL_OVER');
-    const result = await askStemWorker({ type: 'separate', left, right, mode: mode === 'quick' ? 'quick' : 'full' });
+    const result = await askStemWorker({ type: 'separate', left, right, mode: ['quick', 'hd'].includes(mode) ? mode : 'full' });
     if (!result.cached) { license.recordSong(result.id); tellLicense(); }
     return { id: result.id, cached: result.cached, mode: result.mode, stems: result.mode === 'quick' ? QUICK_STEMS : STEMS };
+  });
+  ipcMain.handle('stems:download-hd', async () => {
+    await askStemWorker({ type: 'download-hd' });
+    return true;
   });
   ipcMain.handle('stems:download-quick', async () => {
     await askStemWorker({ type: 'download-quick' });
@@ -207,18 +211,17 @@ app.whenReady().then(() => {
     await askStemWorker({ type: 'download-karaoke' });
     return true;
   });
-  ipcMain.handle('stems:split-vocals', async (_event, id) => {
+  ipcMain.handle('stems:split-vocals', async (_event, id, tier) => {
     if (!/^[0-9a-f]{20}$/.test(String(id))) throw new Error('No such song.');
     if (stemJobs.size) throw new Error('A song is already being separated.');
-    const result = await askStemWorker({ type: 'split-vocals', id });
+    const result = await askStemWorker({ type: 'split-vocals', id, tier: tier === 'hd' ? 'hd' : 'standard' });
     return { id: result.id, cached: result.cached };
   });
   // Which of a song's stems are on disk, so a reopened song knows whether
   // its vocals were ever split.
   ipcMain.handle('stems:cached', async (_event, id) => {
     if (!/^[0-9a-f]{20}$/.test(String(id))) throw new Error('No such song.');
-    const cache = stemFiles.cacheFor(id);
-    return { complete: cache.complete, quick: cache.quick, vocalsSplit: cache.vocalsSplit };
+    return stemFiles.cacheSummary(id);
   });
   ipcMain.handle('stems:clear-cache', async () => {
     if (stemJobs.size) throw new Error('Wait for the current separation to finish first.');
@@ -229,9 +232,9 @@ app.whenReady().then(() => {
   ipcMain.handle('stems:cache-size', async () => stemFiles.cacheSize());
   // The renderer names a song by its fingerprint and a stem by name; the path
   // is built here, so it can never be pointed at anything else on the disk.
-  ipcMain.handle('stems:read', async (_event, id, stem) => {
+  ipcMain.handle('stems:read', async (_event, id, stem, tier) => {
     if (!/^[0-9a-f]{20}$/.test(String(id)) || !ALL_STEMS.includes(stem)) throw new Error('No such stem.');
-    const bytes = await fs.readFile(stemFiles.cacheFor(id).files[stem]);
+    const bytes = await fs.readFile(stemFiles.cacheFor(id, tier === 'hd' ? 'hd' : 'standard').files[stem]);
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   });
 
