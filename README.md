@@ -4,8 +4,14 @@ Split any song into its instruments — drums, bass, guitar, keys, lead
 vocals, backing vocals and everything else (aux) — fast, and entirely on
 your own computer. Nothing is uploaded anywhere.
 
-Three networks do the work, all through ONNX Runtime (CPU, or DirectML on
+Four networks do the work, all through ONNX Runtime (CPU, or DirectML on
 Windows when the graphics card is switched on in Settings):
+
+- **HD mode:** [BS-RoFormer SW](https://huggingface.co/elicwhite/bs-roformer-sw-6stem-onnx)
+  (ByteDance's architecture, MVSep-team weights, MIT), six stems, the top of
+  the open leaderboards. Markedly cleaner than Demucs and several times
+  slower on a processor; the ONNX graph takes spectrograms, so
+  `electron/roformer.cjs` wraps it in a torch-exact STFT/iSTFT.
 
 - **Full mode:** [HT-Demucs](https://github.com/facebookresearch/demucs)
   (Meta, MIT) pulls out drums, bass, guitar, keys, vocals and the rest.
@@ -18,7 +24,7 @@ Windows when the graphics card is switched on in Settings):
   vocals, and what it removes is the lead. The two always add back up to the
   vocals exactly.
 
-The models are downloaded once (136 MB, 53 MB and 53 MB) the first time
+The models are downloaded once (136 MB, 53 MB, 53 MB and 353 MB for HD) the first time
 each is needed. A song split once opens instantly from the library after
 that.
 
