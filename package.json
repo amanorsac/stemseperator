@@ -2,7 +2,7 @@
   "name": "easy-stems",
   "productName": "Easy Stems",
   "description": "Split any song into drums, bass, guitar, keys, vocals and aux — fast, and entirely on your own computer.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "main": "electron/main.cjs",
   "scripts": {

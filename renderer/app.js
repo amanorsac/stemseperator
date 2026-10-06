@@ -52,6 +52,8 @@ function saveSettings() {
 
 const state = {
   page: 'split',
+  /** With a song open: looking at it ('song'), or back at the library ('home'). */
+  view: 'song',
   /** The open song, or null. */
   song: null,
   /** [{ key, label, color, icon, on, gain (dB), buffer, peaks, songPeaks }] */
@@ -189,6 +191,7 @@ function showPage(name) {
     // Export lives on the song's page; the nav item just takes you to it.
     showPage('split');
     if (state.song && state.stems.length) {
+      if (state.view === 'home') backToSong();
       el('export-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
       toast('Open and separate a song first, then Export is at the bottom of its page.');
@@ -208,6 +211,7 @@ function showPage(name) {
 async function openFile(file) {
   if (state.working) { toast('Wait for the current song to finish first.'); return; }
   closeSong(false);
+  state.view = 'song';
   state.error = '';
   const name = baseName(file.name);
   try {
@@ -603,6 +607,7 @@ async function refreshLibrary() {
 async function openFromLibrary(entry) {
   if (state.working) { toast('Wait for the current song to finish first.'); return; }
   closeSong(false);
+  state.view = 'song';
   try {
     const cached = await bridge.stemCached(entry.id);
     if (!cached.complete && !cached.quick) throw new Error("That song's stems are no longer on disk. Open the file again to separate it.");
@@ -661,13 +666,39 @@ function renderWork() {
   el('cancel').hidden = !working.cancellable;
 }
 
+/** Home: the drop card and library, with the open song a click away. */
+function goHome() {
+  if (!state.song) return;
+  state.view = 'home';
+  renderSong();
+  renderStemsVisibility();
+  void refreshLibrary();
+  el('page-split').parentElement.scrollTo({ top: 0 });
+}
+
+function backToSong() {
+  state.view = 'song';
+  renderSong();
+  renderStemsVisibility();
+}
+
+function renderStemsVisibility() {
+  const show = state.stems.length > 0 && state.view === 'song';
+  el('stems-section').hidden = !show;
+  el('export-panel').hidden = !show;
+}
+
 function renderSong() {
   const song = state.song;
-  el('drop-card').hidden = Boolean(song);
-  el('song-card').hidden = !song;
+  const showSong = Boolean(song) && state.view === 'song';
+  el('drop-card').hidden = showSong;
+  el('song-card').hidden = !showSong;
+  el('now-open').hidden = !(song && state.view === 'home');
+  el('now-open-name').textContent = song?.name || '';
   el('intro-error').hidden = true;
   renderError();
   renderWork();
+  miniBar();
   if (!song) return;
   el('song-name').textContent = song.name;
   el('song-name').title = song.name;
@@ -692,15 +723,13 @@ function renderStems() {
 }
 
 function clearStems() {
-  el('stems-section').hidden = true;
-  el('export-panel').hidden = true;
+  renderStemsVisibility();
   el('stems').innerHTML = '';
 }
 
 function buildStems() {
   if (!state.stems.length) { clearStems(); return; }
-  el('stems-section').hidden = false;
-  el('export-panel').hidden = false;
+  renderStemsVisibility();
 
   const holder = el('stems');
   holder.innerHTML = state.stems.map(stem => {
@@ -814,6 +843,10 @@ function renderExport() {
     ? `Export ${on} Stem${on === 1 ? '' : 's'}`
     : `Export: ${mixLabel(state.stems)}`;
   el('export-now').disabled = on === 0;
+  const what = settings.exportMode === 'stems' ? `${on} file${on === 1 ? '' : 's'}` : 'one file';
+  el('export-summary').textContent = state.stems.length
+    ? `${what} · WAV ${settings.sampleRate === 48000 ? '48' : '44.1'} kHz, ${settings.bitDepth}-bit · ${settings.outputFolder || state.contentFolder || 'Documents / Amanorsac Studio / Easy Stems'}`
+    : '';
   el('batch-folder-label').textContent = settings.outputFolder || state.contentFolder || 'Documents / Amanorsac Studio / Easy Stems';
 }
 
@@ -959,7 +992,14 @@ player.subscribe(renderTransport);
 
 hydrateIcons();
 
-document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => showPage(button.dataset.page)));
+document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => {
+  // "Split Song" while already looking at a song takes you back to the start.
+  if (button.dataset.page === 'split' && state.page === 'split' && state.song && state.view === 'song') { goHome(); return; }
+  showPage(button.dataset.page);
+}));
+el('go-home').addEventListener('click', goHome);
+el('back-to-song').addEventListener('click', backToSong);
+el('now-open').querySelector('.tile').addEventListener('click', backToSong);
 el('head-settings').addEventListener('click', () => showPage('settings'));
 
 const fileInput = el('file-input');
@@ -991,7 +1031,7 @@ el('mini-fwd').addEventListener('click', () => player.seek(player.position + 10)
 el('mini-seek').addEventListener('input', () => player.seek(Number(el('mini-seek').value)));
 // The bar appears only once the song card itself has scrolled out of view.
 let songCardVisible = true;
-const miniBar = () => { el('mini-transport').hidden = songCardVisible || !state.song; };
+function miniBar() { el('mini-transport').hidden = songCardVisible || !state.song || state.view !== 'song'; }
 new IntersectionObserver(entries => { songCardVisible = entries[0].isIntersecting; miniBar(); }, { root: el('page-split').parentElement, threshold: 0 })
   .observe(el('song-card'));
 player.subscribe(miniBar);

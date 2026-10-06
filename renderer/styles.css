@@ -225,10 +225,16 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .stem-extra{grid-column:1/-1;display:flex;gap:10px;padding:4px 0 8px 84px}
 
 /* ---------------------------------------------------------------- export */
-.export-panel{display:grid;grid-template-columns:1fr 130px 130px 130px 1.4fr auto;gap:18px;align-items:end;padding:22px 24px}
+.export-panel{display:flex;flex-direction:column;gap:18px;padding:22px 24px}
+.export-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap}
 .export-copy b{display:block;font-size:22px}
 .export-copy small{color:var(--muted);font-size:14px}
-.segmented{display:inline-flex;margin-top:10px;border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
+.export-fields{display:grid;grid-template-columns:150px 150px 150px minmax(0,1fr);gap:18px;align-items:end}
+.export-fields .field{min-width:0}
+.export-foot{display:flex;justify-content:space-between;align-items:center;gap:18px;padding-top:4px;border-top:1px solid var(--line);margin-top:2px;padding-top:16px}
+.export-foot small{color:var(--muted);font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.export-foot .primary{flex:0 0 auto}
+.segmented{display:inline-flex;border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
 .segmented button{padding:7px 12px;font-size:13px;font-weight:600;color:var(--muted)}
 .segmented button.active{background:rgba(26,125,255,.25);color:#fff}
 .field{display:flex;flex-direction:column;gap:8px}
@@ -240,7 +246,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .folder-btn{display:flex;align-items:center;gap:10px;min-width:0}
 .folder-btn em{font-style:normal;flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .folder-btn svg{width:18px;height:18px;flex:0 0 18px;color:var(--muted)}
-@media (max-width:1180px){.export-panel{grid-template-columns:1fr 1fr 1fr}.export-panel .export-copy{grid-column:1/-1}.export-panel .primary{grid-column:1/-1;justify-content:center}}
+@media (max-width:1180px){.export-fields{grid-template-columns:1fr 1fr 1fr}.export-fields .folder-field{grid-column:1/-1}}
+.song-actions{display:flex;gap:8px;flex:0 0 auto}
+.now-open{display:flex;align-items:center;gap:14px;padding:14px 18px;margin-bottom:16px}
+.now-open .tile{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,#1a7dff,#7b3dff);display:grid;place-items:center;color:#fff;flex:0 0 44px}
+.now-open .tile svg{width:20px;height:20px}
+.now-open-copy{flex:1;min-width:0}
+.now-open-copy small{display:block;color:var(--muted);font-size:12px}
+.now-open-copy b{display:block;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ---------------------------------------------------------------- batch */
 .batch-card{padding:18px 20px}

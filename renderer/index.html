@@ -64,6 +64,11 @@
         <input id="file-input" type="file" accept="audio/*,video/*" hidden />
         <input id="batch-input" type="file" accept="audio/*,video/*" multiple hidden />
 
+        <div id="now-open" class="card now-open" hidden>
+          <span class="tile" data-icon="music"></span>
+          <div class="now-open-copy"><small>Still open</small><b id="now-open-name"></b></div>
+          <button class="primary" id="back-to-song"><span data-icon="audio-lines"></span>Back to the song</button>
+        </div>
         <div id="drop-card" class="card drop-card">
           <div class="drop-zone" id="drop-zone">
             <span class="drop-icon" data-icon="file-audio"></span>
@@ -99,7 +104,10 @@
                   <b id="song-name"></b>
                   <small id="song-time-top">0:00 / 0:00</small>
                 </div>
-                <button class="ghost" id="open-song"><span data-icon="folder-open"></span>Open Song</button>
+                <div class="song-actions">
+                  <button class="ghost" id="go-home" title="Back to the library, keeping this song open"><span data-icon="arrow-left"></span>Home</button>
+                  <button class="ghost" id="open-song"><span data-icon="folder-open"></span>Open Song</button>
+                </div>
               </div>
               <div class="wave-wrap" id="song-wave-wrap">
                 <canvas id="song-wave"></canvas>
@@ -143,14 +151,17 @@
         </section>
 
         <section id="export-panel" class="card export-panel" hidden>
-          <div class="export-copy">
-            <b>Export Mix</b>
-            <small>Export individual stems or the full mix.</small>
+          <div class="export-head">
+            <div class="export-copy">
+              <b>Export</b>
+              <small>The selected stems as separate files, or everything that's audible as one mix.</small>
+            </div>
             <div class="segmented" id="export-mode">
               <button data-mode="stems" class="active">Selected stems</button>
               <button data-mode="mix">One mix</button>
             </div>
           </div>
+          <div class="export-fields">
           <div class="field"><span id="lbl-format">Format</span>
             <div class="dropdown" id="export-format" data-options='[["wav","WAV"]]' aria-labelledby="lbl-format"></div>
           </div>
@@ -160,10 +171,14 @@
           <div class="field"><span id="lbl-bits">Bit Depth</span>
             <div class="dropdown" id="export-bits" data-options='[["16","16 bit"],["24","24 bit"]]' aria-labelledby="lbl-bits"></div>
           </div>
-          <div class="field"><span>Output Folder</span>
+          <div class="field folder-field"><span>Output Folder</span>
             <button class="folder-btn" id="export-folder" title="Choose a different folder"><span data-icon="folder"></span><em id="export-folder-label">Documents / Amanorsac Studio / Easy Stems</em><span data-icon="chevron-down"></span></button>
           </div>
-          <button class="primary big" id="export-now"><span data-icon="upload"></span><span id="export-now-label">Export Stems</span></button>
+          </div>
+          <div class="export-foot">
+            <small id="export-summary"></small>
+            <button class="primary big" id="export-now"><span data-icon="upload"></span><span id="export-now-label">Export Stems</span></button>
+          </div>
         </section>
       </section>
 
