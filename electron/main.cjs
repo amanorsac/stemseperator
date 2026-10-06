@@ -10,7 +10,8 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, utilityProcess } = require('electron');
 const fs = require('fs/promises');
 const path = require('path');
-const { StemSeparator, STEMS, QUICK_STEMS, ALL_STEMS } = require('./stems.cjs');
+const { StemSeparator, STEMS, QUICK_STEMS, ALL_STEMS, fingerprint } = require('./stems.cjs');
+const { LicenseClient } = require('./license.cjs');
 
 let mainWindow;
 let stemWorker = null;
@@ -97,6 +98,36 @@ app.whenReady().then(() => {
    * ---------------------------------------------------------------- */
 
   const stemFiles = new StemSeparator(app.getPath('userData'));
+
+  /* ---------------------------------------------------------------- *
+   * Licence and trial
+   * ---------------------------------------------------------------- */
+
+  const license = new LicenseClient(app.getPath('userData'));
+  const licenseReady = license.start().catch(() => license.status());
+  const tellLicense = () => mainWindow?.webContents.send('license:changed', license.status());
+  ipcMain.handle('license:status', async () => { await licenseReady; return license.status(); });
+  ipcMain.handle('license:activate', async (_event, key) => {
+    await licenseReady;
+    try {
+      const status = await license.activate(String(key || ''));
+      tellLicense();
+      return status;
+    } catch (error) {
+      throw new Error(JSON.stringify({ code: error.code || 'failed', message: error.message, devices: error.devices || [] }));
+    }
+  });
+  ipcMain.handle('license:deactivate', async () => {
+    await licenseReady;
+    try {
+      const status = await license.deactivate();
+      tellLicense();
+      return status;
+    } catch (error) {
+      throw new Error(JSON.stringify({ code: error.code || 'failed', message: error.message }));
+    }
+  });
+
   let stemJob = 0;
   const stemJobs = new Map();
 
@@ -153,7 +184,15 @@ app.whenReady().then(() => {
       throw new Error('Separation needs two channels of the same length.');
     }
     if (stemJobs.size) throw new Error('A song is already being separated.');
+    // The trial gate. A song already separated (or already one of the
+    // trial's) is never charged; a new one needs room on the trial or a key.
+    await licenseReady;
+    const id = fingerprint(new Float32Array(left), new Float32Array(right));
+    const cache = stemFiles.cacheFor(id);
+    const alreadyDone = mode === 'quick' ? (cache.quick || cache.complete) : cache.complete;
+    if (!alreadyDone && !license.canSeparate(id)) throw new Error('TRIAL_OVER');
     const result = await askStemWorker({ type: 'separate', left, right, mode: mode === 'quick' ? 'quick' : 'full' });
+    if (!result.cached) { license.recordSong(result.id); tellLicense(); }
     return { id: result.id, cached: result.cached, mode: result.mode, stems: result.mode === 'quick' ? QUICK_STEMS : STEMS };
   });
   ipcMain.handle('stems:download-quick', async () => {

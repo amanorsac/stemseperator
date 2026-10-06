@@ -392,3 +392,31 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(-
   .now-open .tile{width:36px;height:36px;flex-basis:36px}
   .library{max-height:40%}
 }
+
+/* ---------------------------------------------------------------- trial and licence */
+.trial-bar{display:flex;align-items:center;gap:14px;padding:10px 16px;border-radius:14px;background:rgba(255,196,61,.08);border:1px solid rgba(255,196,61,.3);margin-bottom:12px;flex:0 0 auto}
+.trial-bar.over{background:rgba(255,92,106,.08);border-color:rgba(255,92,106,.35)}
+.trial-icon{color:#ffd36b}.trial-bar.over .trial-icon{color:var(--danger)}
+.trial-icon svg{width:20px;height:20px}
+.trial-copy{flex:1;min-width:0}
+.trial-copy b{display:block;font-size:14px}
+.trial-copy small{color:var(--muted);font-size:12px}
+.trial-dots{display:flex;gap:6px}
+.trial-dots i{width:12px;height:12px;border-radius:50%;background:#2a3858;border:1px solid var(--line-2)}
+.trial-dots i.used{background:#ffd36b;border-color:#ffd36b}
+.trial-bar.over .trial-dots i.used{background:var(--danger);border-color:var(--danger)}
+.modal{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:rgba(3,6,12,.72);backdrop-filter:blur(8px)}
+.modal-card{position:relative;width:min(520px,calc(100vw - 48px));padding:30px 32px 26px;border-radius:20px;background:linear-gradient(180deg,rgba(19,28,48,.98),rgba(15,23,42,.98));border:1px solid var(--line-2);box-shadow:0 30px 80px rgba(0,0,0,.6);text-align:center}
+.modal-close{position:absolute;top:14px;right:14px;width:34px;height:34px;border-radius:10px;color:var(--muted)}
+.modal-close:hover{background:var(--panel-2);color:#fff}
+.modal-close svg{width:18px;height:18px}
+.modal-icon{color:#ffd36b;filter:drop-shadow(0 0 14px rgba(255,196,61,.5))}
+.modal-icon svg{width:40px;height:40px}
+.modal-card h2{font-size:24px;margin-top:10px}
+.modal-card p{color:var(--muted);font-size:14px;margin:8px 0 18px}
+.key-input{width:100%;padding:14px 16px;border-radius:12px;background:var(--bg-2);border:1px solid var(--line-2);color:#fff;font:600 20px var(--mono);letter-spacing:.12em;text-align:center;text-transform:uppercase;outline:none}
+.key-input:focus{border-color:var(--blue-2);box-shadow:0 0 0 3px rgba(26,125,255,.25)}
+.modal-card .banner{margin-top:12px;text-align:left}
+.modal-actions{display:flex;justify-content:center;gap:12px;margin-top:20px}
+.modal-card .busy{opacity:.6;pointer-events:none}
+#licence-card .status{margin-right:8px}

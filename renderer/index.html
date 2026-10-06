@@ -64,6 +64,12 @@
         <input id="file-input" type="file" accept="audio/*,video/*" hidden />
         <input id="batch-input" type="file" accept="audio/*,video/*" multiple hidden />
 
+        <div id="trial-bar" class="trial-bar" hidden>
+          <span class="trial-icon" data-icon="zap"></span>
+          <div class="trial-copy"><b id="trial-title">Free trial</b><small id="trial-sub">5 songs to try, then a licence.</small></div>
+          <div class="trial-dots" id="trial-dots" aria-hidden="true"></div>
+          <button class="ghost small" id="trial-enter-key">Enter a licence key</button>
+        </div>
         <div id="now-open" class="card now-open" hidden>
           <span class="tile" data-icon="music"></span>
           <div class="now-open-copy"><small>Still open</small><b id="now-open-name"></b></div>
@@ -209,6 +215,21 @@
           </div>
         </header>
 
+        <div class="card settings-card" id="licence-card">
+          <h3>Licence</h3>
+          <div class="setting">
+            <div><b id="licence-state">Free trial</b><small id="licence-detail">5 of 5 free songs left. A key from amanorsac.studio unlocks unlimited songs on this computer.</small></div>
+            <div class="setting-ctl" id="licence-ctl">
+              <button class="primary" id="licence-open">Enter a licence key</button>
+              <button class="ghost small" id="licence-deactivate" hidden>Deactivate this device</button>
+            </div>
+          </div>
+          <div class="setting">
+            <div><b>Buy a licence</b><small>One purchase, two computers. The key is shown under My Apps on the website and in Amanorsac Hub.</small></div>
+            <div class="setting-ctl"><button class="ghost small" data-external="https://amanorsac.studio"><span data-icon="external-link"></span>amanorsac.studio</button></div>
+          </div>
+        </div>
+
         <div class="card settings-card">
           <h3>Output</h3>
           <div class="setting">
@@ -290,8 +311,8 @@
           <div class="about-grid">
             <div class="about-item">
               <small>Licence</small>
-              <b id="about-licence">Test build — not licensed</b>
-              <span>Licensing is added before release, per the studio's License Integration Standard.</span>
+              <b id="about-licence">Free trial</b>
+              <span id="about-licence-sub">Verified against the studio's licence server; nothing else is ever sent.</span>
             </div>
             <div class="about-item">
               <small>Support</small>
@@ -340,6 +361,20 @@
     </main>
   </div>
 
+  <div id="activate" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="activate-title">
+    <div class="modal-card">
+      <button class="modal-close" id="activate-close" aria-label="Close" data-icon="x"></button>
+      <span class="modal-icon" data-icon="zap"></span>
+      <h2 id="activate-title">Enter your licence key</h2>
+      <p id="activate-copy">Your key is under My Apps on amanorsac.studio, and in Amanorsac Hub. One key covers two computers.</p>
+      <input id="activate-key" class="key-input" type="text" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false" autocomplete="off" maxlength="19" aria-label="Licence key" />
+      <div id="activate-error" class="banner error" hidden></div>
+      <div class="modal-actions">
+        <button class="ghost" id="activate-buy"><span data-icon="external-link"></span>Buy on amanorsac.studio</button>
+        <button class="primary" id="activate-go"><span data-icon="check"></span>Activate</button>
+      </div>
+    </div>
+  </div>
   <div id="toast" class="toast" hidden></div>
   <div id="menu" class="menu" hidden></div>
 

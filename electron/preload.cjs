@@ -16,6 +16,14 @@ contextBridge.exposeInMainWorld('easyStems', {
   stemDownload: () => ipcRenderer.invoke('stems:download'),
   stemDownloadKaraoke: () => ipcRenderer.invoke('stems:download-karaoke'),
   stemDownloadQuick: () => ipcRenderer.invoke('stems:download-quick'),
+  licenseStatus: () => ipcRenderer.invoke('license:status'),
+  licenseActivate: key => ipcRenderer.invoke('license:activate', key),
+  licenseDeactivate: () => ipcRenderer.invoke('license:deactivate'),
+  onLicenseChanged: handler => {
+    const listener = (_event, status) => handler(status);
+    ipcRenderer.on('license:changed', listener);
+    return () => ipcRenderer.removeListener('license:changed', listener);
+  },
   stemSeparate: (left, right, mode) => ipcRenderer.invoke('stems:separate', left, right, mode),
   stemSplitVocals: id => ipcRenderer.invoke('stems:split-vocals', id),
   stemCached: id => ipcRenderer.invoke('stems:cached', id),

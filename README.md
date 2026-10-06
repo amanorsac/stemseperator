@@ -83,10 +83,19 @@ Done, per the Master Standard and File & Data Conventions:
 Open, for the studio to decide before release:
 
 - **App id and key prefix** — assigned by the studio (§2 of the conventions).
-  `easystems` is used as a placeholder in `package.json`.
-- **Licensing** — not integrated yet, on purpose, until testing is done. The
-  About screen says "Test build — not licensed". Integration follows the
-  License Integration Standard when the studio gives the go-ahead.
+  `easystems` is used as a placeholder in `package.json`. The key prefix is
+  not hard-coded: any `XXXX-XXXX-XXXX-XXXX` key is sent to the server as typed.
+- **Licensing** — integrated per the License Integration Standard v1.1
+  (`electron/license.cjs`): the studio server, the studio public key and no
+  other, proof verified (ECDSA P-256, raw 64-byte signature) before anything
+  is trusted, device and key checked, random device id, key and proof stored
+  through the OS key store (Electron `safeStorage`: DPAPI / Keychain), hourly
+  heartbeat, 30-day grace offline, "Deactivate this device". In front of it,
+  a **free trial of 5 songs**, counted by audio fingerprint so a song is never
+  charged twice; after that, separating needs a key, while everything already
+  separated still plays and exports. The §9 acceptance test needs a real key
+  from the studio's My Apps; the client has passed the same steps against a
+  local stand-in server with a test key pair (see "Testing" below).
 - **Model downloads vs. the privacy policy** — Master Standard §7 says an
   unlicensed product makes no network requests. This build downloads its two
   models (about 190 MB) from Hugging Face and GitHub the first time they're
@@ -95,6 +104,19 @@ Open, for the studio to decide before release:
   studio call.
 - **Signing and notarisation** — the installers here are unsigned test
   builds, not release candidates.
+
+## Testing the licence path
+
+The shipped build only ever talks to `https://amanorsac.studio` and only
+trusts the studio's key. For a test run, two environment variables point it
+at a stand-in: `EASY_STEMS_LICENSE_SERVER` (the base URL) and, only when
+that is set, `EASY_STEMS_LICENSE_DEV_PUBKEY` (the stand-in's public key as
+hex). Neither has any effect on the server address or the key in a release
+build, which is what the standard's A11 and A12 checks look for.
+
+The trial state lives in `trial.dat` beside the licence files, sealed the
+same way. Deleting the app's state folder resets both the trial and the
+device id, which the standard treats as a wiped machine.
 
 ## How it's built
 

@@ -68,6 +68,8 @@ const state = {
   batchRunning: false,
   models: { modelReady: false, karaokeReady: false },
   contentFolder: '',
+  /** From the main process: licensed or not, and how much trial is left. */
+  license: { licensed: false, hasKey: false, keyTail: '', trial: { limit: 5, used: 0, remaining: 5 }, needsConnection: false },
 };
 
 const player = new Player();
@@ -303,7 +305,16 @@ async function separateBuffer(buffer, onProgress, mode = settings.mode) {
     const [left, right] = await prepare44k(buffer);
     if (quick) onProgress({ stage: 'quick', fraction: 0, label: 'Separating the vocals…', sub: 'Quick mode: vocals and instrumental.' });
     else onProgress({ stage: 'separate', fraction: 0, label: 'Separating the instruments…', sub: 'The first piece takes half a minute to warm up.' });
-    const result = await bridge.stemSeparate(left.buffer, right.buffer, mode);
+    let result;
+    try {
+      result = await bridge.stemSeparate(left.buffer, right.buffer, mode);
+    } catch (error) {
+      if (/TRIAL_OVER/.test(cleanError(error))) {
+        openActivate('trial');
+        throw new Error('Your free trial is used up. Enter a licence key to keep separating songs; everything you have already split still plays and exports.');
+      }
+      throw error;
+    }
     // A song already separated the full way is opened that way, whatever was asked.
     mode = result.mode === 'quick' ? 'quick' : 'full';
     let split = false;
@@ -894,6 +905,7 @@ function renderBatch() {
 }
 
 async function renderSettings() {
+  void refreshLicense();
   el('settings-folder-label').textContent = settings.outputFolder || state.contentFolder || 'Documents / Amanorsac Studio / Easy Stems';
   dropdowns['settings-rate']?.set(settings.sampleRate);
   dropdowns['settings-bits']?.set(settings.bitDepth);
@@ -923,6 +935,102 @@ async function renderSettings() {
       ? `${(size / 1024 / 1024).toFixed(0)} MB of separated songs, kept so they open instantly.`
       : 'Nothing kept yet. Every song you split is kept so it opens instantly.';
   } catch { /* the page still works without the numbers */ }
+}
+
+/* ------------------------------------------------------------------ *
+ * Licence and trial
+ * ------------------------------------------------------------------ */
+
+function licenseWords() {
+  const lic = state.license;
+  if (lic.licensed) return { title: 'Licensed', detail: `Key ending ${lic.keyTail}, on this computer.${lic.needsConnection ? ' Connect to the internet soon to refresh it.' : ''}` };
+  if (lic.hasKey) return { title: 'Licence needs the internet', detail: `Key ending ${lic.keyTail} could not be refreshed. Connect and it will activate again.` };
+  const { used, limit, remaining } = lic.trial;
+  if (remaining === 0) return { title: 'Free trial used up', detail: `All ${limit} free songs separated. A key unlocks unlimited songs; what you've split already still plays and exports.` };
+  return { title: 'Free trial', detail: `${remaining} of ${limit} free song${limit === 1 ? '' : 's'} left${used ? ` (${used} used)` : ''}. A key from amanorsac.studio unlocks unlimited songs on this computer.` };
+}
+
+function renderLicense() {
+  const lic = state.license;
+  const words = licenseWords();
+  // Home screen bar.
+  const bar = el('trial-bar');
+  bar.hidden = lic.licensed;
+  bar.classList.toggle('over', !lic.licensed && lic.trial.remaining === 0);
+  el('trial-title').textContent = words.title;
+  el('trial-sub').textContent = lic.licensed ? '' : (lic.trial.remaining === 0
+    ? 'Enter a licence key to keep separating songs.'
+    : `${lic.trial.remaining} of ${lic.trial.limit} free songs left, then a licence.`);
+  el('trial-dots').innerHTML = Array.from({ length: lic.trial.limit }, (_, i) => `<i class="${i < lic.trial.used ? 'used' : ''}"></i>`).join('');
+  // Settings card.
+  el('licence-state').textContent = words.title;
+  el('licence-detail').textContent = words.detail;
+  el('licence-open').hidden = lic.licensed;
+  el('licence-deactivate').hidden = !lic.hasKey;
+  // About.
+  el('about-licence').textContent = lic.licensed ? `Licensed · key ending ${lic.keyTail}` : words.title;
+  el('about-licence-sub').textContent = lic.licensed
+    ? 'Verified against the studio\'s licence server; nothing else is ever sent.'
+    : words.detail;
+}
+
+async function refreshLicense() {
+  if (!bridge?.licenseStatus) return;
+  try { state.license = await bridge.licenseStatus(); } catch { /* keep what we have */ }
+  renderLicense();
+}
+
+/** The key dialog; `why` is 'trial' when it opened because the trial ran out. */
+function openActivate(why = '') {
+  const modal = el('activate');
+  el('activate-title').textContent = why === 'trial' ? 'Your free trial is used up' : 'Enter your licence key';
+  el('activate-copy').textContent = why === 'trial'
+    ? `That was your ${state.license.trial.limit} free songs. A licence unlocks unlimited songs on this computer; everything you have separated already still plays and exports.`
+    : 'Your key is under My Apps on amanorsac.studio, and in Amanorsac Hub. One key covers two computers.';
+  el('activate-error').hidden = true;
+  el('activate-key').value = '';
+  modal.hidden = false;
+  el('activate-key').focus();
+}
+function closeActivate() { el('activate').hidden = true; }
+
+async function activateNow() {
+  const key = el('activate-key').value.trim().toUpperCase();
+  const card = el('activate').querySelector('.modal-card');
+  const errorBox = el('activate-error');
+  errorBox.hidden = true;
+  if (!/^[A-Z0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}$/.test(key)) {
+    errorBox.textContent = 'A key looks like XXXX-XXXX-XXXX-XXXX: four blocks of four.';
+    errorBox.hidden = false;
+    return;
+  }
+  card.classList.add('busy');
+  try {
+    state.license = await bridge.licenseActivate(key);
+    renderLicense();
+    closeActivate();
+    toast('Activated. Easy Stems is licensed on this computer.');
+  } catch (error) {
+    let info = { message: cleanError(error) };
+    try { info = JSON.parse(cleanError(error)); } catch { /* plain text */ }
+    const devices = (info.devices || []).map(d => d.device_name).filter(Boolean);
+    errorBox.textContent = info.message + (devices.length ? ` Devices: ${devices.join(', ')}.` : '');
+    errorBox.hidden = false;
+  } finally {
+    card.classList.remove('busy');
+  }
+}
+
+async function deactivateNow() {
+  try {
+    state.license = await bridge.licenseDeactivate();
+    renderLicense();
+    toast('This computer was deactivated. The seat is free for another machine.');
+  } catch (error) {
+    let info = { message: cleanError(error) };
+    try { info = JSON.parse(cleanError(error)); } catch { /* plain text */ }
+    toast(info.message, true);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1184,6 +1292,25 @@ document.querySelectorAll('[data-external]').forEach(link => link.addEventListen
   event.preventDefault();
   void bridge?.openExternal?.(link.dataset.external);
 }));
+
+// Licence and trial.
+el('licence-open').addEventListener('click', () => openActivate());
+el('trial-enter-key').addEventListener('click', () => openActivate());
+el('licence-deactivate').addEventListener('click', () => void deactivateNow());
+el('activate-close').addEventListener('click', closeActivate);
+el('activate-go').addEventListener('click', () => void activateNow());
+el('activate-buy').addEventListener('click', () => void bridge?.openExternal?.('https://amanorsac.studio'));
+el('activate-key').addEventListener('keydown', event => { if (event.key === 'Enter') void activateNow(); });
+el('activate-key').addEventListener('input', () => {
+  // Typed or pasted any old way, shown as the key is printed.
+  const raw = el('activate-key').value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+  el('activate-key').value = raw.match(/.{1,4}/g)?.join('-') || '';
+});
+el('activate').addEventListener('click', event => { if (event.target === el('activate')) closeActivate(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !el('activate').hidden) closeActivate(); });
+bridge?.onLicenseChanged?.(status => { state.license = status; renderLicense(); });
+renderLicense();
+void refreshLicense();
 
 renderExport();
 renderBatch();
