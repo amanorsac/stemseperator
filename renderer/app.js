@@ -170,12 +170,19 @@ const cleanError = error => (error && error.message ? error.message : String(err
 const baseName = name => name.replace(/\.[^.]+$/, '');
 
 /** Elapsed and progress for the stage under way, for a time estimate. */
-const pace = { label: '', startedAt: 0, startProgress: 0 };
+const pace = { label: '', startedAt: 0, startProgress: 0, moved: false };
 function setWorking(next) {
   if (next && next.label !== pace.label) {
     pace.label = next.label;
     pace.startedAt = Date.now();
     pace.startProgress = next.progress || 0;
+    pace.moved = false;
+  } else if (next && !pace.moved && (next.progress || 0) > pace.startProgress) {
+    // The clock starts at the first real step: the first piece carries the
+    // model's loading and would make every estimate after it far too long.
+    pace.startedAt = Date.now();
+    pace.startProgress = next.progress;
+    pace.moved = true;
   }
   if (!next) pace.label = '';
   state.working = next;
@@ -275,7 +282,7 @@ async function prepare44k(buffer) {
 
 /** Live progress from the engine, routed to whatever's showing it. */
 let progressSink = null;
-bridge?.onStemProgress?.(({ stage, fraction }) => {
+bridge?.onStemProgress?.(({ stage, fraction, info }) => {
   const labels = {
     download: ['Downloading the separation model…', 'About 136 MB, once only.'],
     'download-karaoke': ['Downloading the vocal model…', 'About 53 MB, once only.'],
@@ -289,7 +296,12 @@ bridge?.onStemProgress?.(({ stage, fraction }) => {
     quick: ['Separating the vocals…', 'Quick mode: vocals and instrumental.'],
     split: ['Splitting the vocals…', 'Lifting the lead singer off the backing vocals.'],
   };
-  const [label, sub] = labels[stage] || ['Working…', ''];
+  const [label, base] = labels[stage] || ['Working…', ''];
+  // The HD networks say where they are running and how fast, so a slow
+  // run can be told apart from a slow machine.
+  const where = info?.provider ? (info.provider === 'dml' ? 'Graphics card' : 'Processor') : '';
+  const pace = info?.pace ? `${info.pace >= 1 ? info.pace.toFixed(1) : info.pace.toFixed(2)}× realtime` : '';
+  const sub = [base, [where, pace].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
   progressSink?.({ stage, fraction, label, sub });
 });
 

@@ -419,6 +419,14 @@ class StemSeparator {
     return { ...this.sessionOptions(), enableCpuMemArena: false, enableMemPattern: false };
   }
 
+  /**
+   * The RoFormer networks would run a fifth faster with the arena on, but
+   * they fault inside the utility process just as the MDX ones do.
+   */
+  roformerOptions() {
+    return this.mdxOptions();
+  }
+
   cancel() {
     this.cancelled = true;
   }
@@ -446,8 +454,8 @@ class StemSeparator {
       if (hd && this.hdKaraokeReady()) {
         // The HD karaoke network returns what it keeps: the backing vocals.
         const { RoformerModel } = require('./roformer.cjs');
-        this.hdKaraoke ??= new RoformerModel({ ...MELBAND_SPEC, modelPath: this.hdKaraokePath, sessionOptions: this.mdxOptions() });
-        [[backingL, backingR]] = await this.hdKaraoke.separate(left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled);
+        this.hdKaraoke ??= new RoformerModel({ ...MELBAND_SPEC, modelPath: this.hdKaraokePath, sessionOptions: this.roformerOptions() });
+        [[backingL, backingR]] = await this.hdKaraoke.separate(left, right, (fraction, info) => onProgress?.(fraction * 0.97, info), () => this.cancelled);
       } else {
         const { MdxModel } = require('./mdx.cjs');
         this.karaoke ??= new MdxModel({ ...KARAOKE_SPEC, modelPath: this.karaokePath, sessionOptions: this.mdxOptions() });
@@ -507,8 +515,8 @@ class StemSeparator {
     this.cancelled = false;
     try {
       const { RoformerModel } = require('./roformer.cjs');
-      this.hd ??= new RoformerModel({ modelPath: this.hdPath, sessionOptions: this.mdxOptions() });
-      const stems = await this.hd.separate(left, right, fraction => onProgress?.(fraction * 0.98), () => this.cancelled);
+      this.hd ??= new RoformerModel({ modelPath: this.hdPath, sessionOptions: this.roformerOptions() });
+      const stems = await this.hd.separate(left, right, (fraction, info) => onProgress?.(fraction * 0.98, info), () => this.cancelled);
       await fsp.mkdir(cache.folder, { recursive: true });
       for (let i = 0; i < HD_ORDER.length; i += 1) {
         await fsp.writeFile(cache.files[HD_ORDER[i]], encodeWav(stems[i][0], stems[i][1]));
@@ -537,8 +545,8 @@ class StemSeparator {
     this.cancelled = false;
     try {
       const { RoformerModel } = require('./roformer.cjs');
-      this.hdVocals ??= new RoformerModel({ ...MELBAND_SPEC, modelPath: this.hdVocalsPath, sessionOptions: this.mdxOptions() });
-      const [[vocL, vocR]] = await this.hdVocals.separate(left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled);
+      this.hdVocals ??= new RoformerModel({ ...MELBAND_SPEC, modelPath: this.hdVocalsPath, sessionOptions: this.roformerOptions() });
+      const [[vocL, vocR]] = await this.hdVocals.separate(left, right, (fraction, info) => onProgress?.(fraction * 0.97, info), () => this.cancelled);
       const instL = new Float32Array(left.length);
       const instR = new Float32Array(right.length);
       for (let i = 0; i < left.length; i += 1) {

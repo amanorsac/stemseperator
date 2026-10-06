@@ -73,7 +73,7 @@ port.on('message', async ({ data }) => {
       const left = new Float32Array(data.left);
       const right = new Float32Array(data.right);
       const mode = ['quick', 'hd', 'quickhd'].includes(data.mode) ? data.mode : 'full';
-      const progress = fraction => send({ type: 'progress', stage: mode === 'full' ? 'separate' : mode, fraction });
+      const progress = (fraction, info) => send({ type: 'progress', stage: mode === 'full' ? 'separate' : mode, fraction, info });
       const result = mode === 'quick' ? await separator.separateQuick(left, right, progress)
         : mode === 'hd' ? await separator.separateHd(left, right, progress)
           : mode === 'quickhd' ? await separator.separateQuickHd(left, right, progress)
@@ -83,7 +83,7 @@ port.on('message', async ({ data }) => {
     }
     if (data.type === 'split-vocals') {
       const result = await separator.splitVocals(data.id,
-        fraction => send({ type: 'progress', stage: 'split', fraction }), data.tier === 'hd' ? 'hd' : 'standard', { hd: Boolean(data.hd) });
+        (fraction, info) => send({ type: 'progress', stage: 'split', fraction, info }), data.tier === 'hd' ? 'hd' : 'standard', { hd: Boolean(data.hd) });
       send({ type: 'done', job: data.job, result });
       return;
     }

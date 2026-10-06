@@ -139,7 +139,7 @@ app.whenReady().then(() => {
     const worker = utilityProcess.fork(path.join(__dirname, 'stemWorker.cjs'), [], { serviceName: 'Easy Stems separation' });
     worker.on('message', message => {
       if (message.type === 'progress') {
-        mainWindow?.webContents.send('stems:progress', { stage: message.stage, fraction: message.fraction });
+        mainWindow?.webContents.send('stems:progress', { stage: message.stage, fraction: message.fraction, info: message.info || null });
         return;
       }
       const waiting = stemJobs.get(message.job);

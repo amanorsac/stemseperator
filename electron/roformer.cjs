@@ -17,7 +17,8 @@ const { FFTPlan } = require('./fft.cjs');
 
 const N_FFT = 2048;
 const BINS = N_FFT / 2 + 1;
-const OVERLAP = 0.25;
+/** An eighth of a piece: joins still cross-faded over half a second, a seventh fewer pieces than a quarter. */
+const OVERLAP = 0.125;
 /** The six stems of the SW model, in the order the network returns them. */
 const STEMS = ['bass', 'drums', 'other', 'vocals', 'guitar', 'piano'];
 
@@ -49,9 +50,11 @@ class RoformerModel {
     const options = this.sessionOptions || { executionProviders: ['cpu'], graphOptimizationLevel: 'all' };
     try {
       this.session = await ort.InferenceSession.create(this.modelPath, options);
+      this.provider = options.executionProviders?.[0] || 'cpu';
     } catch (error) {
       if (!options.executionProviders || options.executionProviders[0] === 'cpu') throw error;
       this.session = await ort.InferenceSession.create(this.modelPath, { ...options, executionProviders: ['cpu'] });
+      this.provider = 'cpu';
     }
     return this.session;
   }
@@ -154,6 +157,7 @@ class RoformerModel {
     }
     const pieceL = new Float32Array(CHUNK);
     const pieceR = new Float32Array(CHUNK);
+    let pieceSeconds = 0;
     for (let c = 0; c < count; c += 1) {
       if (isCancelled?.()) throw new Error('Separation was cancelled.');
       const start = Math.min(c * step, Math.max(0, total - CHUNK));
@@ -161,7 +165,10 @@ class RoformerModel {
       pieceL.fill(0); pieceR.fill(0);
       pieceL.set(left.subarray(start, start + length));
       pieceR.set(right.subarray(start, start + length));
+      const began = Date.now();
       const stems = await this.runPiece(pieceL, pieceR);
+      // The first piece carries the model's loading; it says nothing about pace.
+      if (c > 0) pieceSeconds = (Date.now() - began) / 1000;
       for (let s = 0; s < this.stems; s += 1) {
         for (let i = 0; i < length; i += 1) {
           out[s][0][start + i] += stems[s][0][i] * window[i];
@@ -169,7 +176,7 @@ class RoformerModel {
         }
       }
       for (let i = 0; i < length; i += 1) weight[start + i] += window[i];
-      onProgress?.((c + 1) / count);
+      onProgress?.((c + 1) / count, { provider: this.provider || 'cpu', pace: pieceSeconds ? (CHUNK / 44100) / pieceSeconds : 0 });
       if (total <= CHUNK) break;
     }
     for (let s = 0; s < this.stems; s += 1) {
