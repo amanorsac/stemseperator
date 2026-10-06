@@ -58,6 +58,9 @@ function createWindow() {
     height: 900,
     minWidth: 1000,
     minHeight: 720,
+    // The window's own icon, for the taskbar and task switcher; the installer
+    // and the app bundle take theirs from the same artwork in build/.
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     frame: false,
     backgroundColor: '#07111b',
     title: 'Easy Stems',
