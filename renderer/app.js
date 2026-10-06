@@ -691,6 +691,7 @@ function renderStemsVisibility() {
 function renderSong() {
   const song = state.song;
   const showSong = Boolean(song) && state.view === 'song';
+  el('page-split').classList.toggle('has-song', showSong);
   el('drop-card').hidden = showSong;
   el('song-card').hidden = !showSong;
   el('now-open').hidden = !(song && state.view === 'home');
@@ -1031,7 +1032,8 @@ el('mini-fwd').addEventListener('click', () => player.seek(player.position + 10)
 el('mini-seek').addEventListener('input', () => player.seek(Number(el('mini-seek').value)));
 // The bar appears only once the song card itself has scrolled out of view.
 let songCardVisible = true;
-function miniBar() { el('mini-transport').hidden = songCardVisible || !state.song || state.view !== 'song'; }
+// Nothing scrolls any more, so the compact bar never needs to appear.
+function miniBar() { el('mini-transport').hidden = true; }
 new IntersectionObserver(entries => { songCardVisible = entries[0].isIntersecting; miniBar(); }, { root: el('page-split').parentElement, threshold: 0 })
   .observe(el('song-card'));
 player.subscribe(miniBar);
@@ -1049,6 +1051,7 @@ volume.addEventListener('input', applyVolume);
 applyVolume();
 el('cancel').addEventListener('click', () => bridge?.stemCancel?.());
 window.addEventListener('resize', () => { drawSongWave(); drawStemWaves(); });
+new ResizeObserver(() => drawStemWaves()).observe(el('stems'));
 
 document.addEventListener('keydown', event => {
   const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(event.target.tagName);

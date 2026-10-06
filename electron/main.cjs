@@ -56,7 +56,7 @@ function createWindow() {
     width: 1360,
     height: 900,
     minWidth: 1000,
-    minHeight: 680,
+    minHeight: 720,
     frame: false,
     backgroundColor: '#07111b',
     title: 'Easy Stems',
