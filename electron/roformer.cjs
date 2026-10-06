@@ -16,19 +16,26 @@
 const { FFTPlan } = require('./fft.cjs');
 
 const N_FFT = 2048;
-const HOP = 512;
 const BINS = N_FFT / 2 + 1;
-/** The piece the graph was traced at: 4 s at 44.1 kHz, 345 frames. */
-const CHUNK = 176400;
-const FRAMES = 1 + Math.floor(CHUNK / HOP);
 const OVERLAP = 0.25;
-/** The six stems, in the order the network returns them. */
+/** The six stems of the SW model, in the order the network returns them. */
 const STEMS = ['bass', 'drums', 'other', 'vocals', 'guitar', 'piano'];
 
+/**
+ * @param {object} spec
+ * @param {string} spec.modelPath
+ * @param {number} spec.hop        STFT hop: 512 for the BS models, 441 for the Mel-Band ones
+ * @param {number} spec.chunk      samples per piece, as the graph was traced (4 s = 176400)
+ * @param {number} spec.stems      how many stems the graph returns
+ */
 class RoformerModel {
-  constructor({ modelPath, sessionOptions }) {
+  constructor({ modelPath, sessionOptions, hop = 512, chunk = 176400, stems = STEMS.length }) {
     this.modelPath = modelPath;
     this.sessionOptions = sessionOptions;
+    this.hop = hop;
+    this.chunk = chunk;
+    this.stems = stems;
+    this.frames = 1 + Math.floor(chunk / hop);
     this.fft = new FFTPlan(N_FFT);
     // Periodic Hann, torch.hann_window's default.
     this.window = new Float64Array(N_FFT);
@@ -63,8 +70,9 @@ class RoformerModel {
     }
     const fr = new Float64Array(N_FFT);
     const fi = new Float64Array(N_FFT);
+    const FRAMES = this.frames;
     for (let t = 0; t < FRAMES; t += 1) {
-      const start = t * HOP;
+      const start = t * this.hop;
       for (let i = 0; i < N_FFT; i += 1) { fr[i] = padded[start + i] * this.window[i]; fi[i] = 0; }
       this.fft.forward(fr, fi);
       for (let k = 0; k < BINS; k += 1) {
@@ -77,6 +85,8 @@ class RoformerModel {
   /** torch.istft of one channel's spectrogram at `offset`, back to CHUNK samples. */
   istft(re, im, offset) {
     const pad = N_FFT / 2;
+    const CHUNK = this.chunk;
+    const FRAMES = this.frames;
     const total = CHUNK + 2 * pad;
     const out = new Float64Array(total);
     const norm = new Float64Array(total);
@@ -87,7 +97,7 @@ class RoformerModel {
       // The upper half of a real signal's spectrum is the conjugate mirror.
       for (let k = BINS; k < N_FFT; k += 1) { fr[k] = fr[N_FFT - k]; fi[k] = -fi[N_FFT - k]; }
       this.fft.inverse(fr, fi);
-      const start = t * HOP;
+      const start = t * this.hop;
       for (let i = 0; i < N_FFT; i += 1) {
         out[start + i] += fr[i] * this.window[i];
         norm[start + i] += this.window[i] * this.window[i];
@@ -105,6 +115,7 @@ class RoformerModel {
   async runPiece(left, right) {
     const ort = require('onnxruntime-node');
     const session = await this.open();
+    const FRAMES = this.frames;
     const plane = BINS * FRAMES;
     const re = new Float32Array(2 * plane);
     const im = new Float32Array(2 * plane);
@@ -116,7 +127,7 @@ class RoformerModel {
     });
     const outRe = result.out_spec_real.data;
     const outIm = result.out_spec_imag.data;
-    return STEMS.map((_, stem) => [
+    return Array.from({ length: this.stems }, (_, stem) => [
       this.istft(outRe, outIm, (stem * 2) * plane),
       this.istft(outRe, outIm, (stem * 2 + 1) * plane),
     ]);
@@ -127,10 +138,11 @@ class RoformerModel {
    * STEMS.length × [left, right] Float32Arrays the length of the input.
    */
   async separate(left, right, onProgress, isCancelled) {
+    const CHUNK = this.chunk;
     const total = left.length;
     const step = Math.floor(CHUNK * (1 - OVERLAP));
     const count = Math.max(1, Math.ceil(Math.max(0, total - CHUNK) / step) + 1);
-    const out = STEMS.map(() => [new Float32Array(total), new Float32Array(total)]);
+    const out = Array.from({ length: this.stems }, () => [new Float32Array(total), new Float32Array(total)]);
     const weight = new Float32Array(total);
     // Raised-cosine cross-fade over the overlapping quarter at each end.
     const fade = Math.floor(CHUNK * OVERLAP);
@@ -150,7 +162,7 @@ class RoformerModel {
       pieceL.set(left.subarray(start, start + length));
       pieceR.set(right.subarray(start, start + length));
       const stems = await this.runPiece(pieceL, pieceR);
-      for (let s = 0; s < STEMS.length; s += 1) {
+      for (let s = 0; s < this.stems; s += 1) {
         for (let i = 0; i < length; i += 1) {
           out[s][0][start + i] += stems[s][0][i] * window[i];
           out[s][1][start + i] += stems[s][1][i] * window[i];
@@ -160,7 +172,7 @@ class RoformerModel {
       onProgress?.((c + 1) / count);
       if (total <= CHUNK) break;
     }
-    for (let s = 0; s < STEMS.length; s += 1) {
+    for (let s = 0; s < this.stems; s += 1) {
       for (let i = 0; i < total; i += 1) {
         const w = Math.max(weight[i], 1e-3);
         out[s][0][i] /= w;
@@ -171,4 +183,4 @@ class RoformerModel {
   }
 }
 
-module.exports = { RoformerModel, STEMS, CHUNK, N_FFT, HOP };
+module.exports = { RoformerModel, STEMS, N_FFT };

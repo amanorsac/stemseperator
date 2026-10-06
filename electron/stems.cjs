@@ -76,6 +76,22 @@ const HD_BYTES = 353 * 1024 * 1024;
 /** The order the RoFormer returns its stems in, to the names used here. */
 const HD_ORDER = ['bass', 'drums', 'other', 'vocals', 'guitar', 'piano'];
 
+/**
+ * The HD vocal networks: Mel-Band RoFormer, exported to ONNX by this
+ * project's tools/export_melband.py and published with the app's releases.
+ * One finds the vocals (Kimberley Jensen's, MIT); the other is a karaoke
+ * model (aufr33 & viperx, MIT) that keeps the backing vocals, like the MDX
+ * karaoke model but far cleaner. Both take 4 s pieces at hop 441.
+ */
+const MODELS_RELEASE = 'https://github.com/amanorsac/stemseperator/releases/download/models-v1';
+const HD_VOCALS_FILE = 'melband_vocals_kj.onnx';
+const HD_VOCALS_URL = `${MODELS_RELEASE}/${HD_VOCALS_FILE}`;
+const HD_VOCALS_BYTES = 900 * 1024 * 1024;
+const HD_KARAOKE_FILE = 'melband_karaoke_aufr33_viperx.onnx';
+const HD_KARAOKE_URL = `${MODELS_RELEASE}/${HD_KARAOKE_FILE}`;
+const HD_KARAOKE_BYTES = 900 * 1024 * 1024;
+const MELBAND_SPEC = { hop: 441, chunk: 176400, stems: 1 };
+
 /** The two halves of the vocals stem, once split. */
 const VOCAL_PARTS = ['lead_vocals', 'backing_vocals'];
 const ALL_STEMS = [...STEMS, 'instrumental', ...VOCAL_PARTS];
@@ -187,6 +203,11 @@ class StemSeparator {
     try { return fs.statSync(this.hdPath).size > 300 * 1024 * 1024; } catch { return false; }
   }
 
+  get hdVocalsPath() { return path.join(this.modelFolder, HD_VOCALS_FILE); }
+  get hdKaraokePath() { return path.join(this.modelFolder, HD_KARAOKE_FILE); }
+  hdVocalsReady() { try { return fs.statSync(this.hdVocalsPath).size > 100 * 1024 * 1024; } catch { return false; } }
+  hdKaraokeReady() { try { return fs.statSync(this.hdKaraokePath).size > 100 * 1024 * 1024; } catch { return false; } }
+
   quickReady() {
     try { return fs.statSync(this.quickPath).size > 40 * 1024 * 1024; } catch { return false; }
   }
@@ -211,6 +232,10 @@ class StemSeparator {
       quickBytes: QUICK_BYTES,
       hdReady: this.hdReady(),
       hdBytes: HD_BYTES,
+      hdVocalsReady: this.hdVocalsReady(),
+      hdVocalsBytes: HD_VOCALS_BYTES,
+      hdKaraokeReady: this.hdKaraokeReady(),
+      hdKaraokeBytes: HD_KARAOKE_BYTES,
       busy: this.busy,
       stems: STEMS,
       quickStems: QUICK_STEMS,
@@ -244,6 +269,16 @@ class StemSeparator {
   downloadHd(onProgress) {
     if (this.hdReady()) return Promise.resolve(this.hdPath);
     return this.fetchModel(HD_URL, this.hdPath, HD_BYTES, onProgress);
+  }
+
+  downloadHdVocals(onProgress) {
+    if (this.hdVocalsReady()) return Promise.resolve(this.hdVocalsPath);
+    return this.fetchModel(HD_VOCALS_URL, this.hdVocalsPath, HD_VOCALS_BYTES, onProgress);
+  }
+
+  downloadHdKaraoke(onProgress) {
+    if (this.hdKaraokeReady()) return Promise.resolve(this.hdKaraokePath);
+    return this.fetchModel(HD_KARAOKE_URL, this.hdKaraokePath, HD_KARAOKE_BYTES, onProgress);
   }
 
   fetchModel(startUrl, target, expectedBytes, onProgress) {
@@ -308,6 +343,8 @@ class StemSeparator {
       this.karaoke = null;
       this.quick = null;
       this.hd = null;
+      this.hdVocals = null;
+      this.hdKaraoke = null;
     }
     this.wantedProvider = wanted;
   }
@@ -359,7 +396,7 @@ class StemSeparator {
     return {
       folder, files, tier,
       complete: STEMS.every(present),
-      quick: tier === 'standard' && QUICK_STEMS.every(present),
+      quick: QUICK_STEMS.every(present),
       vocalsSplit: VOCAL_PARTS.every(present),
     };
   }
@@ -370,7 +407,7 @@ class StemSeparator {
     const hd = this.cacheFor(id, 'hd');
     return {
       complete: standard.complete, quick: standard.quick, vocalsSplit: standard.vocalsSplit,
-      hd: hd.complete, hdVocalsSplit: hd.vocalsSplit,
+      hd: hd.complete, hdQuick: hd.quick, hdVocalsSplit: hd.vocalsSplit,
     };
   }
 
@@ -393,7 +430,7 @@ class StemSeparator {
    * stem alone, that is the backing vocals; the lead is what is left when they
    * are taken away, so the two always add back up to the vocals exactly.
    */
-  async splitVocals(id, onProgress, tier = 'standard') {
+  async splitVocals(id, onProgress, tier = 'standard', { hd = false } = {}) {
     if (this.busy) throw new Error('A song is already being separated.');
     const cache = this.cacheFor(id, tier);
     if (!cache.complete && !cache.quick) throw new Error('Separate the song before splitting its vocals.');
@@ -404,12 +441,20 @@ class StemSeparator {
     this.busy = true;
     this.cancelled = false;
     try {
-      const { MdxModel } = require('./mdx.cjs');
-      this.karaoke ??= new MdxModel({ ...KARAOKE_SPEC, modelPath: this.karaokePath, sessionOptions: this.mdxOptions() });
       const { left, right } = decodeWav(await fsp.readFile(cache.files.vocals));
-      const [backingL, backingR] = await this.karaoke.separate(
-        left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled,
-      );
+      let backingL, backingR;
+      if (hd && this.hdKaraokeReady()) {
+        // The HD karaoke network returns what it keeps: the backing vocals.
+        const { RoformerModel } = require('./roformer.cjs');
+        this.hdKaraoke ??= new RoformerModel({ ...MELBAND_SPEC, modelPath: this.hdKaraokePath, sessionOptions: this.mdxOptions() });
+        [[backingL, backingR]] = await this.hdKaraoke.separate(left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled);
+      } else {
+        const { MdxModel } = require('./mdx.cjs');
+        this.karaoke ??= new MdxModel({ ...KARAOKE_SPEC, modelPath: this.karaokePath, sessionOptions: this.mdxOptions() });
+        [backingL, backingR] = await this.karaoke.separate(
+          left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled,
+        );
+      }
       const leadL = new Float32Array(left.length);
       const leadR = new Float32Array(right.length);
       for (let i = 0; i < left.length; i += 1) {
@@ -470,6 +515,41 @@ class StemSeparator {
       }
       onProgress?.(1);
       return { id, files: cache.files, cached: false, mode: 'hd', provider: this.provider };
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /**
+   * Quick, in HD: the Mel-Band RoFormer vocal network. It returns the vocals;
+   * the instrumental is what is left, so the two add back up exactly. Kept
+   * under the HD tier beside the six-stem HD split.
+   */
+  async separateQuickHd(left, right, onProgress) {
+    if (this.busy) throw new Error('A song is already being separated.');
+    const id = fingerprint(left, right);
+    const cache = this.cacheFor(id, 'hd');
+    if (cache.quick || cache.complete) {
+      onProgress?.(1);
+      return { id, files: cache.files, cached: true, mode: cache.complete ? 'hd' : 'quickhd', provider: this.provider };
+    }
+    this.busy = true;
+    this.cancelled = false;
+    try {
+      const { RoformerModel } = require('./roformer.cjs');
+      this.hdVocals ??= new RoformerModel({ ...MELBAND_SPEC, modelPath: this.hdVocalsPath, sessionOptions: this.mdxOptions() });
+      const [[vocL, vocR]] = await this.hdVocals.separate(left, right, fraction => onProgress?.(fraction * 0.97), () => this.cancelled);
+      const instL = new Float32Array(left.length);
+      const instR = new Float32Array(right.length);
+      for (let i = 0; i < left.length; i += 1) {
+        instL[i] = left[i] - vocL[i];
+        instR[i] = right[i] - vocR[i];
+      }
+      await fsp.mkdir(cache.folder, { recursive: true });
+      await fsp.writeFile(cache.files.vocals, encodeWav(vocL, vocR));
+      await fsp.writeFile(cache.files.instrumental, encodeWav(instL, instR));
+      onProgress?.(1);
+      return { id, files: cache.files, cached: false, mode: 'quickhd', provider: this.provider };
     } finally {
       this.busy = false;
     }

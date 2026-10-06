@@ -1,0 +1,55 @@
+# Exports the Mel-Band RoFormer vocal and karaoke models to ONNX and
+# publishes them as assets of the "models-v1" release, where the app
+# downloads them from. Run by hand; the checkpoints and their licences are
+# the authors' (MIT), the export is ours.
+name: Models
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Samples per traced piece (176400 = 4 s)
+        default: "176400"
+permissions:
+  contents: write
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Python dependencies
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install onnx onnxscript onnxruntime pyyaml numpy einops beartype rotary-embedding-torch librosa
+          git clone --depth 1 https://github.com/ZFTurbo/Music-Source-Separation-Training.git msst
+      - name: Checkpoints
+        run: |
+          mkdir -p work
+          curl -sSL -o work/vocals.ckpt https://huggingface.co/KimberleyJSN/melbandroformer/resolve/main/MelBandRoformer.ckpt
+          curl -sSL -o work/vocals.yaml https://raw.githubusercontent.com/ZFTurbo/Music-Source-Separation-Training/main/configs/KimberleyJensen/config_vocals_mel_band_roformer_kj.yaml
+          curl -sSL -o work/karaoke.ckpt https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt
+          curl -sSL -o work/karaoke.yaml https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956_config.yaml
+      - name: Export
+        env: { MSST_ROOT: ${{ github.workspace }}/msst }
+        run: |
+          python tools/export_melband.py --ckpt work/vocals.ckpt --yaml work/vocals.yaml --out work/melband_vocals_kj.onnx --samples ${{ inputs.samples }}
+          python tools/export_melband.py --ckpt work/karaoke.ckpt --yaml work/karaoke.yaml --out work/melband_karaoke_aufr33_viperx.onnx --samples ${{ inputs.samples }}
+      - name: Verify through the app's engine
+        run: |
+          npm install --ignore-scripts
+          node tools/parity_melband.cjs work/melband_vocals_kj.onnx
+          node tools/parity_melband.cjs work/melband_karaoke_aufr33_viperx.onnx
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: models-v1
+          name: Models v1
+          body: Separation models for Easy Stems, exported to ONNX. Mel-Band RoFormer vocals (Kimberley Jensen, MIT) and karaoke (aufr33 & viperx, MIT).
+          files: |
+            work/melband_vocals_kj.onnx
+            work/melband_karaoke_aufr33_viperx.onnx
+            work/*.onnx.json

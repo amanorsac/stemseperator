@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('easyStems', {
   stemDownloadKaraoke: () => ipcRenderer.invoke('stems:download-karaoke'),
   stemDownloadQuick: () => ipcRenderer.invoke('stems:download-quick'),
   stemDownloadHd: () => ipcRenderer.invoke('stems:download-hd'),
+  stemDownloadHdVocals: () => ipcRenderer.invoke('stems:download-hd-vocals'),
+  stemDownloadHdKaraoke: () => ipcRenderer.invoke('stems:download-hd-karaoke'),
   licenseStatus: () => ipcRenderer.invoke('license:status'),
   licenseActivate: key => ipcRenderer.invoke('license:activate', key),
   licenseDeactivate: () => ipcRenderer.invoke('license:deactivate'),
@@ -26,7 +28,7 @@ contextBridge.exposeInMainWorld('easyStems', {
     return () => ipcRenderer.removeListener('license:changed', listener);
   },
   stemSeparate: (left, right, mode) => ipcRenderer.invoke('stems:separate', left, right, mode),
-  stemSplitVocals: (id, tier) => ipcRenderer.invoke('stems:split-vocals', id, tier),
+  stemSplitVocals: (id, tier, hd) => ipcRenderer.invoke('stems:split-vocals', id, tier, hd),
   stemCached: id => ipcRenderer.invoke('stems:cached', id),
   stemCancel: () => ipcRenderer.invoke('stems:cancel'),
   stemRead: (id, stem, tier) => ipcRenderer.invoke('stems:read', id, stem, tier),

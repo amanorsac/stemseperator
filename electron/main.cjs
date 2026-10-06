@@ -191,13 +191,15 @@ app.whenReady().then(() => {
     // trial's) is never charged; a new one needs room on the trial or a key.
     await licenseReady;
     const id = fingerprint(new Float32Array(left), new Float32Array(right));
-    const cache = stemFiles.cacheFor(id, mode === 'hd' ? 'hd' : 'standard');
-    const alreadyDone = mode === 'quick' ? (cache.quick || cache.complete) : cache.complete;
+    const cache = stemFiles.cacheFor(id, ['hd', 'quickhd'].includes(mode) ? 'hd' : 'standard');
+    const alreadyDone = ['quick', 'quickhd'].includes(mode) ? (cache.quick || cache.complete) : cache.complete;
     if (!alreadyDone && !license.canSeparate(id)) throw new Error('TRIAL_OVER');
-    const result = await askStemWorker({ type: 'separate', left, right, mode: ['quick', 'hd'].includes(mode) ? mode : 'full' });
+    const result = await askStemWorker({ type: 'separate', left, right, mode: ['quick', 'hd', 'quickhd'].includes(mode) ? mode : 'full' });
     if (!result.cached) { license.recordSong(result.id); tellLicense(); }
     return { id: result.id, cached: result.cached, mode: result.mode, stems: result.mode === 'quick' ? QUICK_STEMS : STEMS };
   });
+  ipcMain.handle('stems:download-hd-vocals', async () => { await askStemWorker({ type: 'download-hd-vocals' }); return true; });
+  ipcMain.handle('stems:download-hd-karaoke', async () => { await askStemWorker({ type: 'download-hd-karaoke' }); return true; });
   ipcMain.handle('stems:download-hd', async () => {
     await askStemWorker({ type: 'download-hd' });
     return true;
@@ -211,10 +213,10 @@ app.whenReady().then(() => {
     await askStemWorker({ type: 'download-karaoke' });
     return true;
   });
-  ipcMain.handle('stems:split-vocals', async (_event, id, tier) => {
+  ipcMain.handle('stems:split-vocals', async (_event, id, tier, hd) => {
     if (!/^[0-9a-f]{20}$/.test(String(id))) throw new Error('No such song.');
     if (stemJobs.size) throw new Error('A song is already being separated.');
-    const result = await askStemWorker({ type: 'split-vocals', id, tier: tier === 'hd' ? 'hd' : 'standard' });
+    const result = await askStemWorker({ type: 'split-vocals', id, tier: tier === 'hd' ? 'hd' : 'standard', hd: Boolean(hd) });
     return { id: result.id, cached: result.cached };
   });
   // Which of a song's stems are on disk, so a reopened song knows whether
