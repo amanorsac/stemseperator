@@ -706,6 +706,7 @@ function renderSong() {
   el('drop-card').hidden = showSong;
   el('song-card').hidden = !showSong;
   el('now-open').hidden = !(song && state.view === 'home');
+  renderLicense();
   el('now-open-name').textContent = song?.name || '';
   el('intro-error').hidden = true;
   renderError();
@@ -955,7 +956,8 @@ function renderLicense() {
   const words = licenseWords();
   // Home screen bar.
   const bar = el('trial-bar');
-  bar.hidden = lic.licensed;
+  // Only where the next song gets dropped; never over an open song's mixer.
+  bar.hidden = lic.licensed || (Boolean(state.song) && state.view === 'song');
   bar.classList.toggle('over', !lic.licensed && lic.trial.remaining === 0);
   el('trial-title').textContent = words.title;
   el('trial-sub').textContent = lic.licensed ? '' : (lic.trial.remaining === 0
