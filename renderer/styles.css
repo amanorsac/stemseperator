@@ -211,7 +211,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .switch:before{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4);transition:transform .15s}
 .switch.on{background:var(--blue)}
 .switch.on:before{transform:translateX(20px)}
-.stem-name{font-size:15px;font-weight:500}
+.stem-name{font-size:15px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .stem-wave{align-self:stretch;min-height:26px;max-height:48px;margin:auto 0;height:min(100%,48px);position:relative}
 .stem-wave canvas{width:100%;height:100%;display:block}
 .stem-divider{width:1px;height:30px;background:var(--line-2)}
@@ -457,7 +457,9 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(-
   .transport-btn.play svg{width:22px;height:22px}
   .section-head h2{font-size:17px}
   #stems-section{gap:6px}
-  .stem-row{min-height:36px;padding:1px 6px}
+  .stem-row{min-height:30px;padding:0 6px}
+  .stem-wave{min-height:18px}
+  .dropdown-btn,.folder-btn{padding-top:8px;padding-bottom:8px}
   .stem-icon{width:32px;height:32px;border-radius:8px}
   .stem-icon svg{width:16px;height:16px}
   .stem-wave{max-height:34px;min-height:22px}
