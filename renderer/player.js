@@ -4,8 +4,6 @@
  * cover art. No DOM in here; app.js owns that.
  */
 
-const RATE = 44100;
-
 /* ------------------------------------------------------------------ *
  * The player: any number of tracks of the same length, played in lock-step.
  *
@@ -201,47 +199,23 @@ class Player {
 }
 
 /* ------------------------------------------------------------------ *
- * Mixing and encoding
+ * Buffers
  * ------------------------------------------------------------------ */
 
-const dbToGain = db => 10 ** (db / 20);
-
-/**
- * Sum 16-bit interleaved-stereo stems into floating stereo channels, each
- * at its own gain.
- * @param {Array<{samples: Int16Array, gain: number}>} parts  gain is linear
- */
-function mixStems(parts) {
-  const frames = parts.length ? Math.floor(parts[0].samples.length / 2) : 0;
-  const left = new Float32Array(frames);
-  const right = new Float32Array(frames);
-  parts.forEach(({ samples, gain }) => {
-    const g = gain / 32768;
-    for (let i = 0; i < frames; i += 1) {
-      left[i] += samples[i * 2] * g;
-      right[i] += samples[i * 2 + 1] * g;
-    }
-  });
-  return [left, right];
-}
-
-/** An AudioBuffer from interleaved 16-bit stereo, as the stems are stored. */
-function bufferOfStem(samples, rate = RATE) {
-  const frames = Math.floor(samples.length / 2);
-  const left = new Float32Array(frames);
-  const right = new Float32Array(frames);
-  for (let i = 0; i < frames; i += 1) {
-    left[i] = samples[i * 2] / 32768;
-    right[i] = samples[i * 2 + 1] / 32768;
-  }
-  return toAudioBuffer(null, [left, right], rate);
-}
-
-/** Needs no AudioContext, so a mix can be built before the first click. */
-function toAudioBuffer(_ctx, channels, rate = RATE) {
+/** Needs no AudioContext, so a buffer can be built before the first click. */
+function toAudioBuffer(channels, rate = RATE) {
   const buffer = new AudioBuffer({ numberOfChannels: 2, length: Math.max(1, channels[0].length), sampleRate: rate });
   channels.forEach((data, index) => buffer.copyToChannel(data, index));
   return buffer;
+}
+
+/** A buffer's channels as fresh float arrays, safe to hand to a worker. */
+function channelsOf(buffer) {
+  const left = new Float32Array(buffer.length);
+  const right = new Float32Array(buffer.length);
+  buffer.copyFromChannel(left, 0);
+  buffer.copyFromChannel(right, buffer.numberOfChannels > 1 ? 1 : 0);
+  return [left, right];
 }
 
 /** Decode a file without opening the live audio engine. */
@@ -262,85 +236,9 @@ async function resample(buffer, rate) {
   return offline.startRendering();
 }
 
-/** Encode an AudioBuffer as a PCM WAV, 16 or 24 bits per sample. */
-function encodeWav(buffer, bits = 16) {
-  const channels = 2;
-  const left = buffer.getChannelData(0);
-  const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : left;
-  const frames = left.length;
-  const bytesPer = bits / 8;
-  const blockAlign = channels * bytesPer;
-  const dataBytes = frames * blockAlign;
-  const out = new ArrayBuffer(44 + dataBytes);
-  const view = new DataView(out);
-  const writeString = (offset, text) => {
-    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
-  };
-  writeString(0, 'RIFF'); view.setUint32(4, 36 + dataBytes, true); writeString(8, 'WAVE');
-  writeString(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, channels, true);
-  view.setUint32(24, buffer.sampleRate, true); view.setUint32(28, buffer.sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true); view.setUint16(34, bits, true);
-  writeString(36, 'data'); view.setUint32(40, dataBytes, true);
-
-  let offset = 44;
-  if (bits === 24) {
-    const max = 8388607;
-    const put = value => {
-      const v = Math.max(-8388608, Math.min(max, Math.round(value * max)));
-      view.setUint8(offset, v & 0xff);
-      view.setUint8(offset + 1, (v >> 8) & 0xff);
-      view.setUint8(offset + 2, (v >> 16) & 0xff);
-      offset += 3;
-    };
-    for (let i = 0; i < frames; i += 1) { put(left[i]); put(right[i]); }
-  } else {
-    const clamp = value => Math.max(-32768, Math.min(32767, Math.round(value * 32767)));
-    for (let i = 0; i < frames; i += 1) {
-      view.setInt16(offset, clamp(left[i]), true);
-      view.setInt16(offset + 2, clamp(right[i]), true);
-      offset += 4;
-    }
-  }
-  return out;
-}
-
 /* ------------------------------------------------------------------ *
  * Waveforms
  * ------------------------------------------------------------------ */
-
-/** Peak level per bucket, 0..1, from interleaved 16-bit stereo. */
-function peaksOfStem(samples, buckets) {
-  const frames = Math.floor(samples.length / 2);
-  const out = new Float32Array(buckets);
-  const per = Math.max(1, frames / buckets);
-  for (let b = 0; b < buckets; b += 1) {
-    const start = Math.floor(b * per);
-    const end = Math.min(frames, Math.floor((b + 1) * per));
-    let peak = 0;
-    for (let i = start; i < end; i += 1) {
-      const l = Math.abs(samples[i * 2]);
-      const r = Math.abs(samples[i * 2 + 1]);
-      if (l > peak) peak = l;
-      if (r > peak) peak = r;
-    }
-    out[b] = peak / 32768;
-  }
-  return out;
-}
-
-/** The same from a floating-point channel. */
-function peaksOfChannel(data, buckets) {
-  const out = new Float32Array(buckets);
-  const per = Math.max(1, data.length / buckets);
-  for (let b = 0; b < buckets; b += 1) {
-    const start = Math.floor(b * per);
-    const end = Math.min(data.length, Math.floor((b + 1) * per));
-    let peak = 0;
-    for (let i = start; i < end; i += 1) { const v = Math.abs(data[i]); if (v > peak) peak = v; }
-    out[b] = peak;
-  }
-  return out;
-}
 
 /** Draw peaks as mirrored bars, filling the canvas at device resolution. */
 function drawWave(canvas, peaks, color, options = {}) {

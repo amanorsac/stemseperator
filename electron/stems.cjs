@@ -28,7 +28,10 @@ const STEMS = ['drums', 'bass', 'other', 'vocals', 'guitar', 'piano'];
 const SAMPLE_RATE = 44100;
 /** Samples in one piece: 7.8 seconds, the length the network was exported at. */
 const SEGMENT = 343980;
-const OVERLAP = Math.floor(SEGMENT / 4);
+// An eighth of a piece, half what Demucs itself defaults to: the joins are
+// still cross-faded over a second of audio, and a song needs a seventh
+// fewer pieces run through the network.
+const OVERLAP = Math.floor(SEGMENT / 8);
 const STRIDE = SEGMENT - OVERLAP;
 
 const MODEL_FILE = 'htdemucs_6s_fp16weights.onnx';

@@ -54,7 +54,7 @@ const state = {
   page: 'split',
   /** The open song, or null. */
   song: null,
-  /** [{ key, label, color, icon, on, gain (dB), samples, peaks }] */
+  /** [{ key, label, color, icon, on, gain (dB), buffer, peaks, songPeaks }] */
   stems: [],
   /** A stem heard alone without touching the switches, or null. */
   audition: null,
@@ -69,6 +69,27 @@ const state = {
 };
 
 const player = new Player();
+
+/* ------------------------------------------------------------------ *
+ * The page's worker: every loop over a whole song runs there, so the
+ * window never freezes while stems load or files are written.
+ * ------------------------------------------------------------------ */
+const audioJobs = new Map();
+let audioJobId = 0;
+const audioWorker = new Worker('audio-worker.js');
+audioWorker.onmessage = ({ data }) => {
+  const job = audioJobs.get(data.id);
+  if (!job) return;
+  audioJobs.delete(data.id);
+  if (data.error) job.reject(new Error(data.error)); else job.resolve(data.result);
+};
+function audioJob(type, payload, transfer = []) {
+  audioJobId += 1;
+  return new Promise((resolve, reject) => {
+    audioJobs.set(audioJobId, { resolve, reject });
+    audioWorker.postMessage({ id: audioJobId, type, ...payload }, transfer);
+  });
+}
 
 /* ------------------------------------------------------------------ *
  * Small helpers
@@ -199,7 +220,7 @@ async function openFile(file) {
       path: bridge?.pathOf ? bridge.pathOf(file) : '',
       duration: decoded.duration,
       coverUrl: cover ? URL.createObjectURL(cover) : '',
-      peaks: peaksOfChannel(decoded.getChannelData(0), SONG_BUCKETS),
+      peaks: peaksOfStereo(decoded.getChannelData(0), decoded.getChannelData(1 % decoded.numberOfChannels), SONG_BUCKETS),
       songId: '',
       split: false,
       mode: settings.mode,
@@ -332,21 +353,18 @@ async function separateCurrent() {
 /** Read a song's stems back from the cache and put them in the mixer. */
 async function loadStems(id, split, mode) {
   const order = stemOrder(mode, split);
-  const stems = [];
-  for (const key of order) {
+  // Each stem is read from disk and unpacked in the worker; the main
+  // thread's only share is copying the channels into an AudioBuffer.
+  const stems = await Promise.all(order.map(async key => {
     const bytes = await bridge.stemRead(id, key);
-    // Past the 44-byte header, a WAV of this kind is nothing but samples.
-    const samples = new Int16Array(bytes, 44, Math.floor((bytes.byteLength - 44) / 2));
-    stems.push({
-      key, ...STEM_DEFS[key], on: true, gain: 0, samples,
-      peaks: peaksOfStem(samples, WAVE_BUCKETS),
-      songPeaks: peaksOfStem(samples, SONG_BUCKETS),
-      buffer: bufferOfStem(samples),
-    });
-  }
+    const { left, right, peaks, songPeaks } = await audioJob('decode', { bytes, waveBuckets: WAVE_BUCKETS, songBuckets: SONG_BUCKETS }, [bytes]);
+    return { key, ...STEM_DEFS[key], on: true, gain: 0, buffer: toAudioBuffer([left, right]), peaks, songPeaks };
+  }));
   state.stems = stems;
   state.audition = null;
-  renderStems();
+  // The original song has done its job; the stems are what plays now.
+  if (state.song) state.song.buffer = null;
+  buildStems();
   remix(true);
 }
 
@@ -360,8 +378,14 @@ function audibleStems() {
   return state.stems.filter(stem => stem.on);
 }
 
-function mixOf(stems) {
-  return mixStems(stems.map(stem => ({ samples: stem.samples, gain: dbToGain(stem.gain) })));
+/** Mix stems at their levels, in the worker. Resolves with [left, right]. */
+async function mixOf(stems) {
+  const parts = stems.map(stem => {
+    const [left, right] = channelsOf(stem.buffer);
+    return { left, right, gain: dbToGain(stem.gain) };
+  });
+  const { left, right } = await audioJob('mix', { parts }, parts.flatMap(part => [part.left.buffer, part.right.buffer]));
+  return [left, right];
 }
 
 /** What a stem contributes right now: its level, or nothing if it's out. */
@@ -399,20 +423,20 @@ function remix(fresh = false) {
 function toggleStem(key) {
   const stem = state.stems.find(item => item.key === key);
   stem.on = !stem.on;
-  renderStems();
+  updateStems();
   remix();
 }
 
 function soloStem(key) {
   const alone = state.stems.every(stem => stem.on === (stem.key === key));
   state.stems.forEach(stem => { stem.on = alone ? true : stem.key === key; });
-  renderStems();
+  updateStems();
   remix();
 }
 
 function auditionStem(key) {
   state.audition = state.audition === key ? null : key;
-  renderStems();
+  updateStems();
   remix();
 }
 
@@ -450,11 +474,13 @@ async function resolveOutputFolder(songName) {
   return `${root}/${songName}`;
 }
 
-/** Encode stems (or a mix) at the chosen rate and depth. */
+/** Encode float stereo at the chosen rate and depth, in the worker. */
 async function encodeAt(channels) {
-  let buffer = toAudioBuffer(null, channels);
-  if (settings.sampleRate !== RATE) buffer = await resample(buffer, settings.sampleRate);
-  return encodeWav(buffer, settings.bitDepth);
+  let [left, right] = channels;
+  if (settings.sampleRate !== RATE) {
+    [left, right] = channelsOf(await resample(toAudioBuffer(channels), settings.sampleRate));
+  }
+  return audioJob('encode', { left, right, rate: settings.sampleRate, bits: settings.bitDepth }, [left.buffer, right.buffer]);
 }
 
 async function exportNow(overrideMode, only) {
@@ -470,14 +496,14 @@ async function exportNow(overrideMode, only) {
       if (!chosen.length) throw new Error('Switch on at least one stem to export.');
       for (let i = 0; i < chosen.length; i += 1) {
         const stem = chosen[i];
-        files.push({ name: `${name} - ${stem.file || stem.label}.wav`, bytes: await encodeAt(mixOf([stem])) });
+        files.push({ name: `${name} - ${stem.file || stem.label}.wav`, bytes: await encodeAt(await mixOf([stem])) });
         setWorking({ label: 'Exporting…', sub: stem.label, progress: (i + 1) / chosen.length, cancellable: false });
       }
     } else {
       const stems = only ? state.stems.map(stem => ({ ...stem, on: stem.key !== only })) : state.stems;
       const on = stems.filter(stem => stem.on);
       if (!on.length) throw new Error('Switch on at least one stem to export a mix.');
-      files.push({ name: `${name} - ${mixLabel(stems)}.wav`, bytes: await encodeAt(mixOf(on)) });
+      files.push({ name: `${name} - ${mixLabel(stems)}.wav`, bytes: await encodeAt(await mixOf(on)) });
     }
     const written = await bridge.writeFiles(folder, files);
     setWorking(null);
@@ -494,7 +520,7 @@ async function downloadStem(key) {
   const stem = state.stems.find(item => item.key === key);
   if (!stem || !state.song) return;
   try {
-    const bytes = await encodeAt(mixOf([stem]));
+    const bytes = await encodeAt(await mixOf([stem]));
     await bridge.saveStem(bytes, `${state.song.name} - ${stem.file || stem.label}.wav`);
   } catch (error) {
     toast(cleanError(error) || 'That stem could not be saved.', true);
@@ -542,8 +568,8 @@ async function runBatch() {
       const files = [];
       for (const key of order) {
         const raw = await bridge.stemRead(id, key);
-        const samples = new Int16Array(raw, 44, Math.floor((raw.byteLength - 44) / 2));
-        files.push({ name: `${item.name} - ${STEM_DEFS[key].file || STEM_DEFS[key].label}.wav`, bytes: await encodeAt(mixStems([{ samples, gain: 1 }])) });
+        const { left, right } = await audioJob('decode', { bytes: raw, waveBuckets: 1, songBuckets: 1 }, [raw]);
+        files.push({ name: `${item.name} - ${STEM_DEFS[key].file || STEM_DEFS[key].label}.wav`, bytes: await encodeAt([left, right]) });
       }
       await bridge.writeFiles(folder, files);
       void bridge.librarySave?.({ id, name: item.name, duration: decoded.duration, split, mode });
@@ -656,11 +682,25 @@ function drawSongWave() {
   drawWave(canvas, state.song.peaks, 'rgba(148,163,184,.75)', { gap: 1 });
 }
 
+/**
+ * The stem rows are built once, when a song's stems arrive, and then
+ * updated in place: a switch flipping is a class change on one row, not a
+ * rebuild of seven rows and their waveforms.
+ */
 function renderStems() {
-  const has = state.stems.length > 0;
-  el('stems-section').hidden = !has;
-  el('export-panel').hidden = !has;
-  if (!has) { el('stems').innerHTML = ''; return; }
+  if (state.stems.length) buildStems(); else clearStems();
+}
+
+function clearStems() {
+  el('stems-section').hidden = true;
+  el('export-panel').hidden = true;
+  el('stems').innerHTML = '';
+}
+
+function buildStems() {
+  if (!state.stems.length) { clearStems(); return; }
+  el('stems-section').hidden = false;
+  el('export-panel').hidden = false;
 
   const holder = el('stems');
   holder.innerHTML = state.stems.map(stem => {
@@ -686,11 +726,10 @@ function renderStems() {
       </div>`;
   }).join('');
   hydrateIcons(holder);
+  drawStemWaves();
 
   holder.querySelectorAll('.stem-row').forEach(row => {
     const key = row.dataset.stem;
-    const stem = state.stems.find(item => item.key === key);
-    drawWave(row.querySelector('canvas'), stem.peaks, getComputedStyle(row).getPropertyValue('--c').trim() || '#fff');
     row.querySelector('[data-action="toggle"]').addEventListener('click', () => toggleStem(key));
     row.querySelector('[data-action="solo"]').addEventListener('click', () => soloStem(key));
     row.querySelector('[data-action="audition"]').addEventListener('click', () => auditionStem(key));
@@ -714,6 +753,37 @@ function renderStems() {
   renderExport();
 }
 
+function drawStemWaves() {
+  el('stems').querySelectorAll('.stem-row').forEach(row => {
+    const stem = state.stems.find(item => item.key === row.dataset.stem);
+    if (stem) drawWave(row.querySelector('canvas'), stem.peaks, getComputedStyle(row).getPropertyValue('--c').trim() || '#fff');
+  });
+}
+
+/** Switches, solo and audition states, levels: the rows brought up to date. */
+function updateStems() {
+  el('stems').querySelectorAll('.stem-row').forEach(row => {
+    const stem = state.stems.find(item => item.key === row.dataset.stem);
+    if (!stem) return;
+    const soloed = state.stems.every(item => item.on === (item.key === stem.key));
+    row.classList.toggle('off', !stem.on);
+    const toggle = row.querySelector('[data-action="toggle"]');
+    toggle.classList.toggle('on', stem.on);
+    toggle.setAttribute('aria-checked', String(stem.on));
+    const solo = row.querySelector('[data-action="solo"]');
+    solo.classList.toggle('active', soloed);
+    solo.setAttribute('aria-pressed', String(soloed));
+    row.querySelector('[data-action="audition"]').classList.toggle('active', state.audition === stem.key);
+    const gain = row.querySelector('.gain');
+    if (Number(gain.value) !== stem.gain) {
+      gain.value = String(stem.gain);
+      gain.style.setProperty('--fill', `${((stem.gain + 24) / 36 * 100).toFixed(1)}%`);
+    }
+    row.querySelector('.gain-label').textContent = `${stem.gain > 0 ? '+' : ''}${stem.gain.toFixed(1)} dB`;
+  });
+  renderExport();
+}
+
 function openMenu(anchor, key) {
   const menu = el('menu');
   const stem = state.stems.find(item => item.key === key);
@@ -729,7 +799,7 @@ function openMenu(anchor, key) {
   menu.querySelector('[data-do="download"]').onclick = () => { closeMenu(); void downloadStem(key); };
   menu.querySelector('[data-do="only"]').onclick = () => { closeMenu(); void exportNow('stems', key); };
   menu.querySelector('[data-do="without"]').onclick = () => { closeMenu(); void exportNow('mix', key); };
-  menu.querySelector('[data-do="reset"]').onclick = () => { closeMenu(); setGain(key, 0, true); renderStems(); };
+  menu.querySelector('[data-do="reset"]').onclick = () => { closeMenu(); setGain(key, 0, true); updateStems(); };
   window.setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
 }
 function closeMenu() { el('menu').hidden = true; }
@@ -844,30 +914,42 @@ function renderPlayButtons() {
   el('mini-play').setAttribute('aria-label', label);
 }
 
+/** Everything that changes on a state change: buttons, length, name. */
 function renderTransport() {
   renderPlayButtons();
-  const seek = el('seek');
-  seek.max = String(player.duration || 1);
-  const position = Math.min(player.position, player.duration);
-  if (document.activeElement !== seek) seek.value = String(position);
-  seek.style.setProperty('--fill', `${player.duration ? position / player.duration * 100 : 0}%`);
-  const text = `${formatTime(position)} / ${formatTime(player.duration)}`;
-  el('time').textContent = text;
-  el('song-time-top').textContent = text;
-  el('playhead').style.left = `${player.duration ? position / player.duration * 100 : 0}%`;
-  // The compact bar mirrors the card.
-  el('mini-time').textContent = text;
-  const miniSeek = el('mini-seek');
-  miniSeek.max = String(player.duration || 1);
-  if (document.activeElement !== miniSeek) miniSeek.value = String(position);
-  miniSeek.style.setProperty('--fill', `${player.duration ? position / player.duration * 100 : 0}%`);
+  el('seek').max = String(player.duration || 1);
+  el('mini-seek').max = String(player.duration || 1);
   el('mini-name').textContent = state.song?.name || '';
+  renderPlayhead();
+}
+
+/** Only what moves while the song plays. */
+let shownSecond = -1;
+function renderPlayhead() {
+  const position = Math.min(player.position, player.duration);
+  const fraction = player.duration ? position / player.duration : 0;
+  const seek = el('seek');
+  if (document.activeElement !== seek) seek.value = String(position);
+  seek.style.setProperty('--fill', `${fraction * 100}%`);
+  el('playhead').style.left = `${fraction * 100}%`;
+  const miniSeek = el('mini-seek');
+  if (document.activeElement !== miniSeek) miniSeek.value = String(position);
+  miniSeek.style.setProperty('--fill', `${fraction * 100}%`);
+  // The clock text only changes once a second; the DOM is left alone between.
+  const second = Math.floor(position) * 100000 + Math.floor(player.duration);
+  if (second !== shownSecond) {
+    shownSecond = second;
+    const text = `${formatTime(position)} / ${formatTime(player.duration)}`;
+    el('time').textContent = text;
+    el('song-time-top').textContent = text;
+    el('mini-time').textContent = text;
+  }
 }
 player.subscribe(renderTransport);
 // The playhead moves on the display's own clock while the song plays, and
 // not at all while it doesn't.
 (function tick() {
-  if (state.song && player.playing) renderTransport();
+  if (state.song && player.playing) renderPlayhead();
   requestAnimationFrame(tick);
 })();
 
@@ -926,7 +1008,7 @@ const applyVolume = () => {
 volume.addEventListener('input', applyVolume);
 applyVolume();
 el('cancel').addEventListener('click', () => bridge?.stemCancel?.());
-window.addEventListener('resize', () => { drawSongWave(); renderStems(); });
+window.addEventListener('resize', () => { drawSongWave(); drawStemWaves(); });
 
 document.addEventListener('keydown', event => {
   const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(event.target.tagName);
@@ -939,7 +1021,7 @@ document.addEventListener('keydown', event => {
 el('select-all').addEventListener('click', () => {
   state.stems.forEach(stem => { stem.on = true; });
   state.audition = null;
-  renderStems();
+  updateStems();
   remix();
 });
 
