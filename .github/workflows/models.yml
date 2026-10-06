@@ -18,9 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: "3.11"
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
+        with:
+          node-version: 22
       - name: Python dependencies
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu torch
@@ -34,7 +36,8 @@ jobs:
           curl -sSL -o work/karaoke.ckpt https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt
           curl -sSL -o work/karaoke.yaml https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956_config.yaml
       - name: Export
-        env: { MSST_ROOT: ${{ github.workspace }}/msst }
+        env:
+          MSST_ROOT: ${{ github.workspace }}/msst
         run: |
           python tools/export_melband.py --ckpt work/vocals.ckpt --yaml work/vocals.yaml --out work/melband_vocals_kj.onnx --samples ${{ inputs.samples }}
           python tools/export_melband.py --ckpt work/karaoke.ckpt --yaml work/karaoke.yaml --out work/melband_karaoke_aufr33_viperx.onnx --samples ${{ inputs.samples }}
