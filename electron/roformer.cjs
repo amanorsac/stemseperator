@@ -30,9 +30,11 @@ const STEMS = ['bass', 'drums', 'other', 'vocals', 'guitar', 'piano'];
  * @param {number} spec.stems      how many stems the graph returns
  */
 class RoformerModel {
-  constructor({ modelPath, sessionOptions, hop = 512, chunk = 176400, stems = STEMS.length }) {
+  constructor({ modelPath, sessionOptions, hop = 512, chunk = 176400, stems = STEMS.length, remember = null }) {
     this.modelPath = modelPath;
     this.sessionOptions = sessionOptions;
+    /** { get(): 'cpu'|'dml'|null, set(provider) } — which device won the race last time. */
+    this.remember = remember;
     this.hop = hop;
     this.chunk = chunk;
     this.stems = stems;
@@ -44,19 +46,58 @@ class RoformerModel {
     this.session = null;
   }
 
+  async createSession(provider) {
+    const ort = require('onnxruntime-node');
+    const base = this.sessionOptions || { graphOptimizationLevel: 'all' };
+    return ort.InferenceSession.create(this.modelPath, { ...base, executionProviders: provider === 'dml' ? ['dml', 'cpu'] : ['cpu'] });
+  }
+
+  /**
+   * Open on the device asked for, falling back to the processor if the
+   * card will not open the model at all.
+   */
   async open() {
     if (this.session) return this.session;
-    const ort = require('onnxruntime-node');
-    const options = this.sessionOptions || { executionProviders: ['cpu'], graphOptimizationLevel: 'all' };
+    const wanted = this.sessionOptions?.executionProviders?.[0] || 'cpu';
+    const remembered = wanted === 'dml' ? this.remember?.get?.() : null;
+    const first = remembered || wanted;
     try {
-      this.session = await ort.InferenceSession.create(this.modelPath, options);
-      this.provider = options.executionProviders?.[0] || 'cpu';
+      this.session = await this.createSession(first);
+      this.provider = first;
     } catch (error) {
-      if (!options.executionProviders || options.executionProviders[0] === 'cpu') throw error;
-      this.session = await ort.InferenceSession.create(this.modelPath, { ...options, executionProviders: ['cpu'] });
+      if (first === 'cpu') throw error;
+      this.session = await this.createSession('cpu');
       this.provider = 'cpu';
     }
+    // Asked for the card and nothing decided yet: race it against the
+    // processor on the first piece and keep whichever wins.
+    this.needsRace = wanted === 'dml' && !remembered && this.provider === 'dml';
     return this.session;
+  }
+
+  /**
+   * The graphics path runs some of these networks several times slower than
+   * the processor would. Time one piece each way and keep the faster; the
+   * verdict is remembered per model so the race is run once per machine.
+   */
+  async race(feeds) {
+    const timed = async session => { const t = Date.now(); const out = await session.run(feeds); return { out, ms: Date.now() - t }; };
+    // The first run on either device carries warm-up; take the second.
+    await this.session.run(feeds);
+    const card = await timed(this.session);
+    const cpu = await this.createSession('cpu');
+    await cpu.run(feeds);
+    const proc = await timed(cpu);
+    if (proc.ms < card.ms) {
+      try { await this.session.release?.(); } catch { /* fine */ }
+      this.session = cpu;
+      this.provider = 'cpu';
+      this.remember?.set?.('cpu');
+      return proc.out;
+    }
+    try { await cpu.release?.(); } catch { /* fine */ }
+    this.remember?.set?.('dml');
+    return card.out;
   }
 
   /**
@@ -124,10 +165,17 @@ class RoformerModel {
     const im = new Float32Array(2 * plane);
     this.stft(left, re, im, 0);
     this.stft(right, re, im, plane);
-    const result = await session.run({
+    const feeds = {
       spec_real: new ort.Tensor('float32', re, [1, 2, BINS, FRAMES]),
       spec_imag: new ort.Tensor('float32', im, [1, 2, BINS, FRAMES]),
-    });
+    };
+    let result;
+    if (this.needsRace) {
+      this.needsRace = false;
+      result = await this.race(feeds);
+    } else {
+      result = await session.run(feeds);
+    }
     const outRe = result.out_spec_real.data;
     const outIm = result.out_spec_imag.data;
     return Array.from({ length: this.stems }, (_, stem) => [
