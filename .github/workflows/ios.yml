@@ -18,6 +18,11 @@ on:
         description: "Upload to TestFlight (needs the App Store secrets)"
         type: boolean
         default: false
+# This account gets one macOS runner at a time, and a job left waiting is
+# cancelled after a quarter of an hour, so the macOS jobs take turns.
+concurrency:
+  group: macos-runner
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: macos-latest

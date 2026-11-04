@@ -53,6 +53,9 @@ jobs:
 
   macos:
     runs-on: macos-14
+    concurrency:
+      group: macos-runner
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
