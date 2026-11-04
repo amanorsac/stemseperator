@@ -106,7 +106,7 @@ final class AppModel: ObservableObject {
     }
 
     private func loadStems(from folder: URL) async throws {
-        let stems = try await Task.detached { () -> [Stem] in
+        let stems = try await Task.detached { () throws -> [Stem] in
             var loaded: [Stem] = []
             for key in ["drums", "bass", "guitar", "piano", "vocals", "other"] {
                 let (l, r) = try Wav.decode(folder.appendingPathComponent("\(key).wav"))

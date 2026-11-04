@@ -36,10 +36,13 @@ jobs:
       - name: Build for the simulator
         run: |
           cd ios
+          set -o pipefail
           xcodebuild -project EasyStems.xcodeproj -scheme EasyStems -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO build | tail -40
-          test "${PIPESTATUS[0]}" -eq 0
+            CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 || status=$?
+          grep -E "(error|warning): " build.log | grep -v "^warning: " | sort -u | head -80 || true
+          tail -15 build.log
+          exit "${status:-0}"
       - name: Import the distribution certificate
         if: ${{ inputs.testflight && env.IOS_DIST_P12 != '' }}
         env:
