@@ -1,58 +1,78 @@
 # Easy Stems for iOS: building and sending to TestFlight
 
-The app lives in `ios/`. Nothing binary is committed: the Xcode project is
-generated from `ios/project.yml` with XcodeGen, in CI and on a Mac.
+The app lives in `ios/`. The Xcode project is generated from
+`ios/project.yml` with XcodeGen, so nothing binary is committed.
 
-## Every push
+Every push under `ios/` builds the app for the simulator. That needs no
+Apple account. Sending a build to TestFlight follows the studio's macOS
+signing standard and needs three things done once.
 
-The `iOS` workflow builds the app for the simulator on every change under
-`ios/`. That proves it compiles. No Apple account is needed for that.
+## 1. Let this repository see the secrets
 
-## Sending a build to TestFlight
+The studio's Apple secrets live on the `Amanorsac-Studio` organisation.
+This repository is owned by the personal account `amanorsac`, and
+organisation secrets never reach a personal account's repositories. They
+resolve to empty strings. Pick one:
 
-Run the `iOS` workflow by hand (Actions → iOS → Run workflow) with
-**Upload to TestFlight** ticked. It needs these repository secrets once:
+- **Transfer the repository into the organisation** (Settings → General →
+  Transfer ownership → `Amanorsac-Studio`). GitHub redirects the old URLs,
+  so the desktop app's model downloads keep working. Then check the org
+  secrets' visibility is "All repositories", since this repository is public.
+- **Or add them as repository secrets** here (Settings → Secrets and
+  variables → Actions), with the same names and values as the org ones.
 
-| Secret | What it is |
+| Secret | Contents |
 | --- | --- |
-| `APPLE_TEAM_ID` | The studio's team id, `SGQVTNFK4Q`. |
-| `IOS_DIST_P12` | An **Apple Distribution** certificate and its private key as a base64 `.p12`. |
-| `IOS_DIST_PASSWORD` | The password that `.p12` was exported with. |
-| `ASC_KEY_P8` | An App Store Connect API key (`.p8` text, or base64 of it), role App Manager or Admin. |
-| `ASC_KEY_ID` | That key's id. |
-| `ASC_ISSUER_ID` | The issuer id shown on the same App Store Connect page. |
+| `APPLE_TEAM_ID` | `SGQVTNFK4Q` |
+| `ASC_KEY_P8` | the text of `AuthKey_XXXXXXXX.p8`, or base64 of it |
+| `ASC_KEY_ID` | the `XXXXXXXX` from that filename |
+| `ASC_ISSUER_ID` | the UUID from App Store Connect → Users and Access → Integrations |
+| `APPLE_DIST_P12` | base64 of the Apple Distribution .p12 built in step 2 |
+| `APPLE_DIST_PASSWORD` | that .p12's password |
 
-### Making the `.p12`
+Paste contents, never filenames. The API key needs the Admin role, or App
+Manager with access to Certificates, Identifiers and Profiles, so Xcode can
+register the bundle id and make the App Store profile itself.
 
-Apple Distribution certificates are made at developer.apple.com →
-Certificates. With the certificate (`distribution.cer`) and the private key
-that signed its request (`distribution-key.pem`):
+## 2. Build the Apple Distribution .p12
 
-```sh
-openssl x509 -in distribution.cer -inform DER -out distribution.pem
-openssl pkcs12 -export -legacy -inkey distribution-key.pem -in distribution.pem \
-  -out distribution.p12 -passout pass:CHOOSE_A_PASSWORD
-base64 -i distribution.p12 | pbcopy      # paste as IOS_DIST_P12
+`distribution-cert.pem` and `key.pem` are in
+`C:\Users\amano\Documents\Amanorsac Studio\Security\`. The flags are the
+same as the standard's and are not optional. The intermediate for Apple
+Distribution is Apple's WWDR G3 authority, not the Developer ID one.
+
+```bash
+curl -o AppleWWDRCAG3.cer https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+openssl x509 -inform DER -in AppleWWDRCAG3.cer -out wwdr.pem
+
+openssl pkcs12 -export -legacy \
+  -macalg sha1 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES \
+  -inkey key.pem \
+  -in distribution-cert.pem \
+  -certfile wwdr.pem \
+  -name "Apple Distribution: Stephen Amanor Sackey (SGQVTNFK4Q)" \
+  -out apple_distribution.p12 \
+  -passout "pass:THEPASSWORD"
+
+# must print:  MAC: sha1, Iteration 2048
+openssl pkcs12 -legacy -in apple_distribution.p12 -passin "pass:THEPASSWORD" -info -nokeys 2>&1 >/dev/null | grep MAC
+
+base64 -w0 apple_distribution.p12 > apple_distribution.b64   # paste the contents as APPLE_DIST_P12
 ```
 
-If the certificate was made on a Mac through Keychain Access, export it from
-there as a `.p12` instead and base64 that.
+## 3. Create the app record
 
-### Making the API key
+App Store Connect → Apps → **+** → New App. Platform iOS, name Easy Stems,
+bundle id `com.amanorsac.easystems`, SKU `easystems`. If the bundle id is
+not offered yet, register it at developer.apple.com → Identifiers first.
+Apple's API cannot create app records, so this one step is by hand.
 
-App Store Connect → Users and Access → Integrations → App Store Connect API
-→ Team keys → **+**. Download the `.p8` (only offered once). Paste its text
-as `ASC_KEY_P8`, the Key ID as `ASC_KEY_ID`, the Issuer ID as `ASC_ISSUER_ID`.
+## Sending a build
 
-### The app record
-
-App Store Connect → Apps → **+** → New App: platform iOS, name Easy Stems,
-bundle id `com.amanorsac.easystems` (register it first under Identifiers at
-developer.apple.com if it is not offered), SKU `easystems`. Without this
-record the upload is refused.
-
-Once uploaded, the build appears under the app's TestFlight tab after
-Apple processes it (ten minutes or so). Add testers there.
+Actions → iOS → Run workflow, with **Sign and upload to TestFlight** ticked.
+The run fails at its first step, naming each missing secret, if the
+repository cannot see one. Once uploaded, the build shows under the app's
+TestFlight tab after Apple processes it, usually within fifteen minutes.
 
 ## Building on a Mac
 
