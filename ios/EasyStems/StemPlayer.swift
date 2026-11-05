@@ -51,11 +51,10 @@ final class StemPlayer: ObservableObject {
         // One start time for every node, a little ahead so all are scheduled first.
         let hostStart = AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: 0.05))
         for t in tracks {
-            let frame = AVAudioFramePosition(startOffset * 44100)
-            let remaining = AVAudioFrameCount(max(0, Int64(t.buffer.frameLength) - frame))
-            if remaining == 0 { continue }
+            let frame = AVAudioFrameCount(startOffset * 44100)
+            guard frame < t.buffer.frameLength, let rest = Self.slice(t.buffer, from: frame) else { continue }
             t.node.volume = t.gain
-            t.node.scheduleSegment(t.buffer, startingFrame: frame, frameCount: remaining, at: nil)
+            t.node.scheduleBuffer(rest, at: nil, options: [], completionHandler: nil)
             t.node.play(at: hostStart)
         }
         startedAt = hostStart
@@ -64,6 +63,26 @@ final class StemPlayer: ObservableObject {
         ticker = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+    }
+
+    /// The tail of a buffer from a frame on, since a player node cannot start
+    /// a buffer part-way through.
+    private static func slice(_ buffer: AVAudioPCMBuffer, from frame: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        let count = buffer.frameLength - frame
+        guard count > 0, let out = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: count) else { return nil }
+        out.frameLength = count
+        for ch in 0..<Int(buffer.format.channelCount) {
+            out.floatChannelData![ch].update(from: buffer.floatChannelData![ch] + Int(frame), count: Int(count))
+        }
+        return out
+    }
+
+    /// A stem's samples back out, for export.
+    func samples(_ key: String) -> (left: [Float], right: [Float])? {
+        guard let t = tracks.first(where: { $0.key == key }) else { return nil }
+        let n = Int(t.buffer.frameLength)
+        return (Array(UnsafeBufferPointer(start: t.buffer.floatChannelData![0], count: n)),
+                Array(UnsafeBufferPointer(start: t.buffer.floatChannelData![1], count: n)))
     }
 
     private func tick() {

@@ -16,8 +16,7 @@ struct Stem: Identifiable, Sendable {
     var id: String { key }
     var on = true
     var gain: Float = 0   // dB
-    let left: [Float]
-    let right: [Float]
+    let frames: Int
     let peaks: [Float]
 }
 
@@ -106,18 +105,19 @@ final class AppModel: ObservableObject {
     }
 
     private func loadStems(from folder: URL) async throws {
-        let stems = try await Task.detached { () throws -> [Stem] in
-            var loaded: [Stem] = []
+        let loaded = try await Task.detached { () throws -> [(key: String, left: [Float], right: [Float])] in
+            var out: [(key: String, left: [Float], right: [Float])] = []
             for key in ["drums", "bass", "guitar", "piano", "vocals", "other"] {
                 let (l, r) = try Wav.decode(folder.appendingPathComponent("\(key).wav"))
                 if l.isEmpty { throw NSError(domain: "EasyStems", code: 30, userInfo: [NSLocalizedDescriptionKey: "A stem file is missing."]) }
-                loaded.append(Stem(key: key, left: l, right: r, peaks: AppModel.peaks(l, r, buckets: 120)))
+                out.append((key, l, r))
             }
-            return loaded
+            return out
         }.value
-        self.stems = stems
+        self.stems = loaded.map { Stem(key: $0.key, frames: $0.left.count, peaks: Self.peaks($0.left, $0.right, buckets: 120)) }
         self.audition = nil
-        self.player.load(stems: stems.map { ($0.key, $0.left, $0.right) })
+        // The player keeps the only copy of the samples; the arrays go away here.
+        self.player.load(stems: loaded)
         self.applyGains()
     }
 
@@ -171,18 +171,23 @@ final class AppModel: ObservableObject {
         let on = stems.filter { $0.on }
         var urls: [URL] = []
         if mix {
-            let n = on.first?.left.count ?? 0
+            let n = on.first?.frames ?? 0
             var l = [Float](repeating: 0, count: n), r = [Float](repeating: 0, count: n)
-            for s in on { let g = powf(10, s.gain / 20); for i in 0..<n { l[i] += s.left[i] * g; r[i] += s.right[i] * g } }
+            for s in on {
+                guard let (sl, sr) = player.samples(s.key) else { continue }
+                let g = powf(10, s.gain / 20)
+                for i in 0..<min(n, sl.count) { l[i] += sl[i] * g; r[i] += sr[i] * g }
+            }
             let off = stems.filter { !$0.on }
             let label = off.isEmpty ? "Full mix" : (on.count == 1 ? "\(Theme.stemLabel(on[0].key)) only" : (off.count == 1 ? "No \(Theme.stemLabel(off[0].key))" : on.map { Theme.stemLabel($0.key) }.joined(separator: " + ")))
             let url = folder.appendingPathComponent("\(song.name) - \(label).wav")
             try? Wav.encode(left: l, right: r).write(to: url); urls.append(url)
         } else {
             for s in on {
+                guard let (sl, sr) = player.samples(s.key) else { continue }
                 let g = powf(10, s.gain / 20)
                 let url = folder.appendingPathComponent("\(song.name) - \(s.key == "other" ? "Aux" : Theme.stemLabel(s.key)).wav")
-                try? Wav.encode(left: s.left.map { $0 * g }, right: s.right.map { $0 * g }).write(to: url); urls.append(url)
+                try? Wav.encode(left: sl.map { $0 * g }, right: sr.map { $0 * g }).write(to: url); urls.append(url)
             }
         }
         return urls
